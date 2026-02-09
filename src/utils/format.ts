@@ -1,20 +1,15 @@
-export function strooopsToXLM(stroops: bigint | string): string {
-  const n = typeof stroops === 'string' ? BigInt(stroops) : stroops;
-  const xlm = Number(n) / 10_000_000;
-  return xlm.toFixed(7).replace(/\.?0+$/, '');
+export function stroopsToXLM(stroops: bigint | number): string {
+  const s = typeof stroops === 'number' ? BigInt(stroops) : stroops;
+  const whole = s / 10_000_000n;
+  const frac = s % 10_000_000n;
+  return frac === 0n ? whole.toString() : `${whole}.${frac.toString().padStart(7, '0').replace(/0+$/, '')}`;
 }
 
-export function xlmToStroops(xlm: string): bigint {
-  const [whole, frac = ''] = xlm.split('.');
-  const padded = frac.padEnd(7, '0').slice(0, 7);
-  return BigInt(whole + padded);
+export function truncateAddress(address: string, prefixLen = 6, suffixLen = 4): string {
+  if (address.length <= prefixLen + suffixLen + 3) return address;
+  return `${address.slice(0, prefixLen)}...${address.slice(-suffixLen)}`;
 }
 
-export function truncateAddress(address: string, chars = 6): string {
-  if (address.length <= chars * 2 + 3) return address;
-  return `${address.slice(0, chars)}...${address.slice(-4)}`;
-}
-
-export function formatDate(timestamp: number): string {
-  return new Intl.DateTimeFormat('en-US', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(timestamp));
+export function formatTimestamp(ms: number): string {
+  return new Date(ms).toISOString().replace('T', ' ').slice(0, 19) + ' UTC';
 }
