@@ -1,4 +1,3 @@
-export { createEscrow } from './create';
-export { releaseEscrow } from './release';
-export { disputeEscrow } from './dispute';
-export { cancelEscrow, getEscrow } from './cancel';
+export { TrustFlowEscrowClient } from './client';
+export { EscrowBuilder } from './builder';
+export { EscrowMonitor } from './monitor';
