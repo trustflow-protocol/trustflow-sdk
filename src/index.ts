@@ -1,9 +1,10 @@
-export { TrustFlowClient } from './client';
-export { TrustFlowError } from './errors';
-export { DEFAULT_NETWORK, HORIZON_URLS, SOROBAN_RPC_URLS, SDK_VERSION } from './constants';
-export { EscrowStatus } from './types';
-export type { Network, ClientConfig, Escrow, CreateEscrowParams, ReleaseEscrowParams, DisputeEscrowParams } from './types';
+export * from './types';
+export * from './types/contract';
+export * from './types/events';
 export * from './escrow';
+export * from './auth';
 export * from './stellar';
-export * from './wallet';
-export * from './utils';
+export * from './utils/validation';
+export * from './utils/format';
+
+export const SDK_VERSION = '0.1.0';
