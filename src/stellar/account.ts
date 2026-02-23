@@ -1,29 +1,19 @@
-import { Horizon } from '@stellar/stellar-sdk';
-import type { TrustFlowClient } from '../client';
+import { getNetworkConfig, StellarNetwork } from './network';
 
 export interface AccountInfo {
-  id: string;
-  sequence: string;
-  xlmBalance: string;
-  subentryCount: number;
+  address: string;
+  balanceXLM: string;
+  sequenceNumber: string;
+  isActive: boolean;
 }
 
-export async function loadAccountInfo(
-  client: TrustFlowClient,
-  address: string,
-): Promise<AccountInfo> {
-  const server = client.getServer();
-  const account = await server.loadAccount(address);
-  const xlm = account.balances.find((b: any) => b.asset_type === 'native');
-  return {
-    id: account.account_id,
-    sequence: account.sequence,
-    xlmBalance: xlm?.balance ?? '0',
-    subentryCount: account.subentry_count,
-  };
-}
-
-export async function accountExists(client: TrustFlowClient, address: string): Promise<boolean> {
-  try { await client.getServer().loadAccount(address); return true; }
-  catch { return false; }
+export async function fetchAccountInfo(address: string, network: StellarNetwork): Promise<AccountInfo> {
+  const { horizonUrl } = getNetworkConfig(network);
+  try {
+    const res = await fetch(`${horizonUrl}/accounts/${address}`);
+    if (!res.ok) return { address, balanceXLM: '0', sequenceNumber: '0', isActive: false };
+    const data = await res.json();
+    const xlm = data.balances?.find((b: any) => b.asset_type === 'native');
+    return { address, balanceXLM: xlm?.balance ?? '0', sequenceNumber: data.sequence, isActive: true };
+  } catch { return { address, balanceXLM: '0', sequenceNumber: '0', isActive: false }; }
 }
