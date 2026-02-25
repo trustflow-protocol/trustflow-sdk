@@ -1,19 +1,14 @@
-import { TransactionBuilder, Account, Networks, BASE_FEE } from '@stellar/stellar-sdk';
-import type { TrustFlowClient } from '../client';
+export interface PreparedTx { xdr: string; networkPassphrase: string; fee: string; }
+export interface SignedTx { xdr: string; signatures: string[]; }
+export interface SubmittedTx { hash: string; successful: boolean; ledger?: number; }
 
-export async function buildBaseTransaction(
-  client: TrustFlowClient,
-  sourceAddress: string,
-): Promise<TransactionBuilder> {
-  const server = client.getServer();
-  const account = await server.loadAccount(sourceAddress);
-  const networkPassphrase = client.network === 'MAINNET' ? Networks.PUBLIC : Networks.TESTNET;
-  return new TransactionBuilder(new Account(account.account_id, account.sequence), {
-    fee: BASE_FEE,
-    networkPassphrase,
+export async function submitTransaction(xdr: string, horizonUrl: string): Promise<SubmittedTx> {
+  const res = await fetch(`${horizonUrl}/transactions`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: `tx=${encodeURIComponent(xdr)}`,
   });
-}
-
-export function setTransactionTimeout(builder: TransactionBuilder, seconds = 300): TransactionBuilder {
-  return builder.setTimeout(seconds);
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.extras?.result_codes?.transaction || 'Submission failed');
+  return { hash: data.hash, successful: data.successful, ledger: data.ledger };
 }
