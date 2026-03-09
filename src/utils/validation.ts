@@ -21,3 +21,11 @@ export function xlmToStroops(xlm: string): bigint {
   const frac = parts[1] ? BigInt(parts[1].padEnd(7, '0').slice(0, 7)) : 0n;
   return whole + frac;
 }
+
+export function isValidEscrowId(value: string): boolean {
+  return typeof value === 'string' && value.trim().length > 0 && value.length <= 128;
+}
+
+export function isValidBlockCount(value: number): boolean {
+  return Number.isInteger(value) && value > 0 && value <= 1_000_000;
+}
