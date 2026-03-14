@@ -1,0 +1,10 @@
+{
+  "name": "@trustflow/sdk",
+  "version": "0.1.0",
+  "description": "SDK to interact with TrustFlow Protocol contracts.",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc"
+  },
+  "license": "MIT"
+}
