@@ -1,18 +1,21 @@
-import { createEscrow, releaseEscrow } from '../src/escrow';
-import { TrustFlowClient } from '../src/client';
+import { EscrowBuilder } from '../src/escrow/builder';
 
-const client = new TrustFlowClient({ contractId: 'CTEST000000000000000000000000000000000000000000000000000000' });
-const SENDER    = 'GBAB2222222222222222222222222222222222222222222222222222222222';
-const RECIPIENT = 'GCDE3333333333333333333333333333333333333333333333333333333333';
+describe('EscrowBuilder', () => {
+  const ADDR_A = 'G' + 'A'.repeat(55);
+  const ADDR_B = 'G' + 'B'.repeat(55);
 
-describe('createEscrow', () => {
-  it('rejects zero amount', async () => {
-    await expect(createEscrow(client, { sender: SENDER, recipient: RECIPIENT, amountStroops: 0n })).rejects.toThrow();
+  it('builds valid escrow params', () => {
+    const params = new EscrowBuilder().setDepositor(ADDR_A).setBeneficiary(ADDR_B).setAmount('100').build();
+    expect(params.depositor).toBe(ADDR_A);
+    expect(params.amountXLM).toBe('100');
   });
 
-  it('returns escrow with PENDING status on valid params', async () => {
-    const e = await createEscrow(client, { sender: SENDER, recipient: RECIPIENT, amountStroops: 5_000_000n });
-    expect(e.sender).toBe(SENDER);
-    expect(e.recipient).toBe(RECIPIENT);
+  it('throws if depositor missing', () => {
+    expect(() => new EscrowBuilder().setBeneficiary(ADDR_B).setAmount('1').build()).toThrow('depositor required');
+  });
+
+  it('sets optional deadline', () => {
+    const p = new EscrowBuilder().setDepositor(ADDR_A).setBeneficiary(ADDR_B).setAmount('50').setDeadline(1000).build();
+    expect(p.deadlineBlocks).toBe(1000);
   });
 });
