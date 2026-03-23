@@ -1,15 +1,26 @@
-import type { TrustFlowClient } from '../client';
-import type { DisputeEscrowParams } from '../types';
-import { TrustFlowError } from '../errors';
+import { DisputeParams, SDKResult } from '../types';
 
-export async function disputeEscrow(
-  client: TrustFlowClient,
-  params: DisputeEscrowParams,
-): Promise<string> {
-  if (!params.escrowId) throw TrustFlowError.validation('escrowId', 'Required');
-  if (!params.reason || params.reason.trim().length < 10) {
-    throw TrustFlowError.validation('reason', 'Must be at least 10 characters');
+export class DisputeClient {
+  constructor(private apiUrl: string, private token: string) {}
+
+  async raiseDispute(params: DisputeParams): Promise<SDKResult<{ disputeId: string }>> {
+    try {
+      const res = await fetch(`${this.apiUrl}/disputes`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${this.token}` },
+        body: JSON.stringify(params),
+      });
+      if (!res.ok) return { ok: false, error: `HTTP ${res.status}` };
+      const data = await res.json();
+      return { ok: true, data: { disputeId: data.id } };
+    } catch (e) { return { ok: false, error: String(e) }; }
   }
-  // Soroban contract call: raise_dispute(escrow_id, reason)
-  return `tx_dispute_${params.escrowId}_${Date.now()}`;
+
+  async getDispute(escrowId: string): Promise<SDKResult<unknown>> {
+    try {
+      const res = await fetch(`${this.apiUrl}/disputes/${escrowId}`, { headers: { Authorization: `Bearer ${this.token}` } });
+      if (!res.ok) return { ok: false, error: `HTTP ${res.status}` };
+      return { ok: true, data: await res.json() };
+    } catch (e) { return { ok: false, error: String(e) }; }
+  }
 }
