@@ -29,3 +29,7 @@ export function isValidEscrowId(value: string): boolean {
 export function isValidBlockCount(value: number): boolean {
   return Number.isInteger(value) && value > 0 && value <= 1_000_000;
 }
+
+export function sanitizeString(value: string, maxLength = 256): string {
+  return value.replace(/[<>"']/g, '').trim().slice(0, maxLength);
+}
