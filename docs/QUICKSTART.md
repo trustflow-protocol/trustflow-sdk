@@ -1,31 +1,27 @@
 # TrustFlow SDK Quick Start
 
-## Installation
+## Install
 ```bash
-npm install @trustflow/sdk
-```
-
-## Basic Usage
-```ts
-import { TrustFlowClient } from '@trustflow/sdk';
-
-const client = new TrustFlowClient({
-  contractId: 'YOUR_CONTRACT_ID',
-  network: 'TESTNET',
-});
-
-await client.connect();
-const balance = await client.getBalance('YOUR_ADDRESS');
-console.log('Balance:', balance, 'XLM');
+npm install @trustflow-protocol/sdk
 ```
 
 ## Create an Escrow
-```ts
-import { createEscrow, xlmToStroops } from '@trustflow/sdk';
+```typescript
+import { TrustFlowEscrowClient, EscrowBuilder } from '@trustflow-protocol/sdk';
 
-const escrow = await createEscrow(client, {
-  sender: 'G...',
-  recipient: 'G...',
-  amountStroops: xlmToStroops('100'),
+const client = new TrustFlowEscrowClient({
+  contractId: process.env.CONTRACT_ID,
+  network: 'TESTNET',
+  rpcUrl: 'https://soroban-testnet.stellar.org',
+  networkPassphrase: 'Test SDF Network ; September 2015',
 });
+
+const params = new EscrowBuilder()
+  .setDepositor('GDEPOSITOR...')
+  .setBeneficiary('GBENEFICIARY...')
+  .setAmount('100')
+  .build();
+
+const result = await client.createEscrow(params);
+if (result.ok) console.log('Escrow created:', result.data.escrowId);
 ```
