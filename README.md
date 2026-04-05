@@ -113,3 +113,7 @@ Join the movement to decentralize trust in the gig economy.
 ## 📜 License
 
 MIT License. Copyright (c) 2026 TrustFlow Protocol.
+
+## Documentation
+- [Quick Start](./docs/QUICKSTART.md)
+- [API Reference](./docs/API.md)
