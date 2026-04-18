@@ -7,7 +7,8 @@
     "build": "tsc",
     "test": "jest",
     "test:coverage": "jest --coverage",
-    "examples": "ts-node examples/"
+    "examples": "ts-node examples/",
+    "lint": "eslint src --ext .ts"
   },
   "license": "MIT"
 }
