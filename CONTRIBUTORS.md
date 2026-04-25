@@ -1,14 +1,14 @@
 # Contributors
 
-| Name | GitHub | Contributions |
-|------|--------|---------------|
-| Chioma Christopher | @Kaylahray | Core client, types, constants |
-| phertyameen | @phertyameen | Escrow module |
-| OWK50GA | @OWK50GA | Stellar integration |
-| Mercy Duru | @MercyDuru | Contract helpers |
-| Kaylahray | @Kaylahray | Wallet adapters |
-| Duru Mercy | @DuruMercy | Utilities |
-| Ifeoluwa | @Ifeoluwa | React hooks |
-| Josue19-08 | @Josue19-08 | Tests |
-| Peteroche | @Peteroche | Examples & config |
-| robertocarlous | @robertocarlous | Documentation |
+| GitHub | Contribution |
+|--------|-------------|
+| @Kaylahray | Core types and validation |
+| @phertyameen | Escrow client and builder |
+| @OWK50GA | Stellar network integration |
+| @MercyDuru | Auth challenge flow |
+| @Kaylahray5 | Test suite |
+| @DuruMercy | Dispute client |
+| @Ifeoluwa | Documentation |
+| @Josue19-08 | Test coverage |
+| @Peteroche | Build tooling |
+| @robertocarlous | Final polish |
