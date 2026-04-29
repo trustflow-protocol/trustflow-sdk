@@ -10,5 +10,8 @@
     "examples": "ts-node examples/",
     "lint": "eslint src --ext .ts"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "dependencies": {
+    "zod": "^3.22.0"
+  }
 }
