@@ -1,5 +1,5 @@
 import { Address, nativeToScVal } from '@stellar/stellar-sdk';
-import type { CreateEscrowParams } from '../types';
+import type { CreateEscrowParams, ReleaseMilestoneParams } from '../types';
 
 export function buildCreateEscrowArgs(params: CreateEscrowParams): unknown[] {
   return [
@@ -12,6 +12,15 @@ export function buildCreateEscrowArgs(params: CreateEscrowParams): unknown[] {
 
 export function buildReleaseArgs(escrowId: string, caller: string): unknown[] {
   return [nativeToScVal(escrowId, { type: 'string' }), new Address(caller).toScVal()];
+}
+
+export function buildReleaseMilestoneArgs(params: ReleaseMilestoneParams): unknown[] {
+  return [
+    nativeToScVal(params.escrowId, { type: 'string' }),
+    nativeToScVal(params.milestoneId, { type: 'u32' }),
+    nativeToScVal(params.amountStroops, { type: 'i128' }),
+    new Address(params.caller).toScVal(),
+  ];
 }
 
 export function buildDisputeArgs(escrowId: string, reason: string): unknown[] {

@@ -40,6 +40,13 @@ export interface ReleaseEscrowParams {
   caller: string;
 }
 
+export interface ReleaseMilestoneParams {
+  escrowId: string;
+  milestoneId: number;
+  amountStroops: bigint;
+  caller: string;
+}
+
 export interface DisputeEscrowParams {
   escrowId: string;
   caller: string;
