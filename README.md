@@ -1,186 +1,303 @@
-# 📦 TrustFlow SDK
+# TrustFlow SDK
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![TypeScript](https://img.shields.io/badge/TypeScript-5.0-blue.svg)](https://www.typescriptlang.org/)
+Type-safe TypeScript SDK for building escrow, milestone-payment, and dispute-resolution workflows on the TrustFlow Protocol.
 
-> **Type-safe TypeScript SDK for building gig-economy applications on the TrustFlow Protocol (Stellar/Soroban).**
+The SDK gives application developers a small set of clients and utilities for:
 
-The TrustFlow SDK provides a developer-friendly interface for interacting with TrustFlow smart contracts on the Stellar network. Build escrow systems, dispute resolution platforms, and decentralized freelance marketplaces with clean, type-safe APIs.
+- connecting to Stellar testnet or mainnet
+- creating and releasing escrows
+- building escrow parameters with validation-friendly helpers
+- listing backend-backed gig or escrow records
+- coordinating multi-signature release flows
+- formatting and validating Stellar addresses, amounts, and escrow IDs
 
----
-
-## ⚡ Quick Start
-
-### Installation
+## Installation
 
 ```bash
 npm install @trustflow/sdk
-# or
+```
+
+```bash
 yarn add @trustflow/sdk
 ```
 
-### Basic Usage
+## Requirements
+
+- Node.js 18 or newer
+- A deployed TrustFlow Soroban contract ID
+- Stellar accounts funded on the network you use
+- Optional TrustFlow backend URL and API key for APIs such as `getGigs`
+
+## Environment
+
+Create a local `.env` file or export these values in your runtime:
+
+```bash
+TRUSTFLOW_CONTRACT_ID=CCONTRACT...
+TRUSTFLOW_NETWORK=TESTNET
+TRUSTFLOW_API_BASE_URL=https://api.example.com
+TRUSTFLOW_API_KEY=dev-api-key
+```
+
+`TRUSTFLOW_NETWORK` should be `TESTNET` or `MAINNET`.
+
+## Connect To Stellar
+
+Use `TrustFlowClient` when your app needs network configuration, Horizon access, balance checks, or connection validation.
 
 ```typescript
 import { TrustFlowClient } from '@trustflow/sdk';
-import { createEscrow } from '@trustflow/sdk/escrow';
 
-// Initialize client
 const client = new TrustFlowClient({
   contractId: process.env.TRUSTFLOW_CONTRACT_ID!,
   network: 'TESTNET',
+  apiBaseUrl: process.env.TRUSTFLOW_API_BASE_URL,
+  apiKey: process.env.TRUSTFLOW_API_KEY,
 });
 
 await client.connect();
 
-// Create an escrow
-const escrow = await createEscrow(client, {
-  sender: 'GDEPOSITOR...',
-  recipient: 'GBENEFICIARY...',
-  amountStroops: '1000000',
-  durationBlocks: 17280,
-  metadata: { orderId: 'ORD-001' },
-});
-
-console.log('Escrow created:', escrow.id);
+console.log(client.getConfig());
+console.log('Connected:', client.isConnected());
 ```
 
-See [examples/](./examples/) for more complete examples.
+## Create And Fund An Escrow
 
-### Multi-Sig Escrow (M-of-N)
-
-Collect signatures from multiple approvers before a release is broadcast:
+`TrustFlowEscrowClient` wraps escrow operations. Use `EscrowBuilder` when you want chainable parameter construction before calling `createEscrow`.
 
 ```typescript
-import { MultiSigEscrowClient } from '@trustflow/sdk';
+import { EscrowBuilder, TrustFlowEscrowClient } from '@trustflow/sdk';
 import { Networks } from '@stellar/stellar-sdk';
 
-const client = new MultiSigEscrowClient({
+const escrowClient = new TrustFlowEscrowClient({
+  contractId: process.env.TRUSTFLOW_CONTRACT_ID!,
+  network: 'TESTNET',
+  rpcUrl: 'https://soroban-testnet.stellar.org',
+  networkPassphrase: Networks.TESTNET,
+  apiBaseUrl: process.env.TRUSTFLOW_API_BASE_URL,
+  apiKey: process.env.TRUSTFLOW_API_KEY,
+});
+
+const escrowParams = new EscrowBuilder()
+  .setDepositor('GDEPOSITOR...')
+  .setBeneficiary('GBENEFICIARY...')
+  .setAmount('100')
+  .setDeadline(17_280)
+  .build();
+
+const created = await escrowClient.createEscrow(escrowParams);
+
+if (!created.ok) {
+  throw new Error(created.error);
+}
+
+console.log('Escrow ID:', created.data.escrowId);
+console.log('Funding transaction:', created.data.txHash);
+```
+
+The current escrow client returns an `SDKResult<T>` object, so callers should check `result.ok` before reading `result.data`.
+
+## Release Funds
+
+Release an escrow by passing the escrow ID and the signer or releaser address.
+
+```typescript
+import { TrustFlowEscrowClient } from '@trustflow/sdk';
+import { Networks } from '@stellar/stellar-sdk';
+
+const escrowClient = new TrustFlowEscrowClient({
   contractId: process.env.TRUSTFLOW_CONTRACT_ID!,
   network: 'TESTNET',
   rpcUrl: 'https://soroban-testnet.stellar.org',
   networkPassphrase: Networks.TESTNET,
 });
 
-// Register a 2-of-2 release operation
-const { data: { operationId } } = client.initMultiSigOperation({
-  escrowId: 'esc-42',
-  signers: [APPROVER_A, APPROVER_B],
-  threshold: 2,
-  operationType: 'release',
-  unsignedXdr: UNSIGNED_RELEASE_XDR,
+const released = await escrowClient.releaseEscrow('esc-123', 'GDEPOSITOR...');
+
+if (!released.ok) {
+  throw new Error(released.error);
+}
+
+console.log('Release transaction:', released.data.txHash);
+```
+
+## List Gigs With Pagination
+
+`getGigs` is backed by the TrustFlow API, so `apiBaseUrl` is required. Pagination is cursor-based.
+
+```typescript
+import { TrustFlowEscrowClient } from '@trustflow/sdk';
+import { Networks } from '@stellar/stellar-sdk';
+
+const escrowClient = new TrustFlowEscrowClient({
+  contractId: process.env.TRUSTFLOW_CONTRACT_ID!,
+  network: 'TESTNET',
+  rpcUrl: 'https://soroban-testnet.stellar.org',
+  networkPassphrase: Networks.TESTNET,
+  apiBaseUrl: process.env.TRUSTFLOW_API_BASE_URL,
+  apiKey: process.env.TRUSTFLOW_API_KEY,
+});
+
+let cursor: string | undefined;
+
+do {
+  const page = await escrowClient.getGigs({
+    cursor,
+    limit: 20,
+    status: 'active',
+    depositor: 'GDEPOSITOR...',
+  });
+
+  if (!page.ok) {
+    throw new Error(page.error);
+  }
+
+  for (const gig of page.data.data) {
+    console.log(gig.id, gig.status);
+  }
+
+  cursor = page.data.nextCursor ?? undefined;
+} while (cursor);
+```
+
+## Multi-Signature Escrow Release
+
+`MultiSigEscrowClient` coordinates M-of-N signature collection for release, cancel, or dispute operations.
+
+```typescript
+import { MultiSigEscrowClient } from '@trustflow/sdk';
+import { Networks } from '@stellar/stellar-sdk';
+
+const multiSig = new MultiSigEscrowClient({
+  contractId: process.env.TRUSTFLOW_CONTRACT_ID!,
+  network: 'TESTNET',
+  rpcUrl: 'https://soroban-testnet.stellar.org',
   networkPassphrase: Networks.TESTNET,
 });
 
-// Each approver submits their signed XDR independently
-client.addSignature({ operationId, signerAddress: APPROVER_A, signedXdr: SIGNED_XDR_A });
-client.addSignature({ operationId, signerAddress: APPROVER_B, signedXdr: SIGNED_XDR_B });
+const init = multiSig.initMultiSigOperation({
+  escrowId: 'esc-123',
+  signers: ['GAPPROVERA...', 'GAPPROVERB...'],
+  threshold: 2,
+  operationType: 'release',
+  unsignedXdr: 'AAAA...',
+  networkPassphrase: Networks.TESTNET,
+});
 
-// Broadcast once threshold is met
-const result = await client.submitWhenReady(operationId, 'https://horizon-testnet.stellar.org');
-console.log('Released! tx:', result.data?.txHash);
+if (!init.ok) {
+  throw new Error(init.error);
+}
+
+multiSig.addSignature({
+  operationId: init.data.operationId,
+  signerAddress: 'GAPPROVERA...',
+  signedXdr: 'AAAA-signed-by-a...',
+});
+
+multiSig.addSignature({
+  operationId: init.data.operationId,
+  signerAddress: 'GAPPROVERB...',
+  signedXdr: 'AAAA-signed-by-b...',
+});
+
+const submitted = await multiSig.submitWhenReady(
+  init.data.operationId,
+  'https://horizon-testnet.stellar.org',
+);
+
+if (submitted.ok) {
+  console.log('Submitted transaction:', submitted.data.txHash);
+}
 ```
 
-See [examples/multisig-escrow.ts](./examples/multisig-escrow.ts) for the full walkthrough.
+See `examples/multisig-escrow.ts` for a fuller walkthrough.
 
----
+## Utility Helpers
 
-## ✨ Features
+```typescript
+import {
+  assertStellarAddress,
+  isValidEscrowId,
+  isValidXLMAmount,
+  stroopsToXLM,
+  truncateAddress,
+  xlmToStroops,
+} from '@trustflow/sdk';
 
-### Current Capabilities
+assertStellarAddress('GDEPOSITOR...', 'depositor');
 
-- **🔐 Escrow Management**: Create, fund, release, and monitor escrows
-- **✍️ Multi-Sig Escrows**: M-of-N signature collection for shared backend Escrows via `MultiSigEscrowClient`
-- **⚖️ Dispute Resolution**: Raise and track disputes with on-chain governance
-- **🔑 Wallet Integration**: Built-in support for Freighter and Albedo wallets
-- **📊 Event Monitoring**: Real-time escrow state change tracking
-- **🛡️ Type Safety**: Full TypeScript support with Zod validation schemas
-- **🧪 Test Coverage**: Comprehensive Jest test suite
+const stroops = xlmToStroops('10.5');
+console.log(stroops.toString());
+console.log(stroopsToXLM(stroops));
+console.log(truncateAddress('GDEPOSITOR...'));
+console.log(isValidXLMAmount('10.5'));
+console.log(isValidEscrowId('esc-123'));
+```
 
-### Architecture Highlights
+## Error Handling
 
-- **Result Types**: No thrown exceptions in public APIs - all errors returned as `SDKResult<T>`
-- **Immutable Builders**: Fluent APIs like `EscrowBuilder` for parameter construction
-- **Network Agnostic**: Easily switch between Testnet and Mainnet
-- **Pure Utilities**: Side-effect-free helper functions for formatting and validation
+The SDK uses two public error styles:
 
-Read more in [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md)
+- `SDKResult<T>` for escrow clients, where callers check `result.ok`
+- `TrustFlowError` exceptions for configuration and direct network-client failures
 
----
+```typescript
+import { TrustFlowClient, TrustFlowError } from '@trustflow/sdk';
 
-## 📚 Documentation
+try {
+  const client = new TrustFlowClient({
+    contractId: process.env.TRUSTFLOW_CONTRACT_ID!,
+    network: 'TESTNET',
+  });
+  await client.connect();
+} catch (error) {
+  if (error instanceof TrustFlowError) {
+    console.error(error.code, error.message);
+  } else {
+    throw error;
+  }
+}
+```
 
-- **[Quick Start Guide](./docs/QUICKSTART.md)** - Get up and running in 5 minutes
-- **[API Reference](./docs/API.md)** - Complete API documentation
-- **[Architecture](./docs/ARCHITECTURE.md)** - Design principles and module structure
-- **[Examples](./examples/)** - Working code examples for common use cases
+## Project Scripts
 
----
+```bash
+npm install
+npm test
+npm run build
+npm run lint
+```
 
-## 🗺️ Roadmap
+## Repository Layout
 
-The SDK is under active development. Here's what's coming:
+```text
+src/
+  auth/       Challenge and session helpers
+  contract/   Contract invocation, simulation, and argument builders
+  escrow/     Escrow clients, builders, monitoring, disputes, and multisig
+  stellar/    Network, account, and transaction helpers
+  utils/      Validation, formatting, retry, logging, and cache helpers
+  wallet/     Freighter and Albedo wallet adapters
+examples/     Runnable usage examples
+docs/         Architecture, API, and quickstart notes
+tests/        Jest test suite
+```
 
-### In Progress
-- [ ] Tsup bundler configuration for ESM/CJS exports
-- [ ] NPM publishing pipeline with provenance
-- [ ] Simulation wrappers for transaction cost estimation
-- [ ] Auto-retry logic for RPC endpoints
+## Documentation
 
-### Planned Features
-- [x] Multi-signature support for corporate escrows
-- [ ] IPFS storage helpers for file uploads
-- [ ] Pagination support for high-volume queries
-- [ ] Event parsing utilities for XDR decoding
-- [ ] Juror voting system integration
+- `docs/QUICKSTART.md`
+- `docs/API.md`
+- `docs/ARCHITECTURE.md`
+- `examples/`
 
-See our [GitHub Issues](https://github.com/trustflow-protocol/trustflow-sdk/issues) for detailed progress tracking.
+## Contributing
 
----
+1. Fork the repository.
+2. Install dependencies with `npm install`.
+3. Create a topic branch.
+4. Run `npm test`, `npm run build`, and `npm run lint`.
+5. Open a pull request with a short summary and verification notes.
 
-## 🤝 Contributing
+## License
 
-We welcome contributions! To get started:
-
-1. Fork the repository
-2. Install dependencies: `npm install`
-3. Run tests: `npm test`
-4. Submit a PR
-
-Please ensure:
-- Tests pass (`npm test`)
-- Linting passes (`npm run lint`)
-- Code is formatted (`npm run format`)
-
-Check [CONTRIBUTING.md](./CONTRIBUTING.md) for detailed guidelines.
-
----
-
-## 🔒 Security
-
-- **Strict Linting**: ESLint strict mode enforced across the codebase
-- **Input Validation**: All parameters validated with Zod schemas
-- **Type Safety**: TypeScript strict mode prevents runtime errors
-- **Test Coverage**: Critical paths covered by Jest integration tests
-
-Report security issues to: security@trustflow.xyz
-
----
-
-## 📜 License
-
-MIT License - Copyright (c) 2026 TrustFlow Protocol
-
-See [LICENSE](./LICENSE) for details.
-
----
-
-## 🌟 Community
-
-- **Issues**: [Report bugs or request features](https://github.com/trustflow-protocol/trustflow-sdk/issues)
-- **Contributors**: See [CONTRIBUTORS.md](./CONTRIBUTORS.md)
-- **Changelog**: See [CHANGELOG.md](./CHANGELOG.md)
-
----
-
-*Securing the future of work, one transaction at a time.*
+MIT. See `LICENSE` for details.
