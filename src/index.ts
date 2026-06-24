@@ -2,6 +2,7 @@ export * from './types';
 export * from './types/contract';
 export * from './types/events';
 export * from './types/multisig';
+export { TrustFlowClient } from './client';
 export * from './escrow';
 export * from './auth';
 export * from './stellar';
