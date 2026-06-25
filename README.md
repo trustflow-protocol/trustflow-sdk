@@ -33,6 +33,9 @@ const client = new TrustFlowClient({
 
 await client.connect();
 
+// Fund an escrow after creation
+await escrow.fund({ amountStroops: '1000000' });
+
 // Create an escrow
 const escrow = await createEscrow(client, {
   sender: 'GDEPOSITOR...',
