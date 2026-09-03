@@ -7,6 +7,7 @@ import {
 } from '@stellar/stellar-sdk';
 import type { TrustFlowClient } from '../client';
 import { TrustFlowError } from '../errors';
+import { retry } from '../utils/retry';
 import type {
   AssembleParams,
   FeeBumpOptions,
@@ -60,20 +61,16 @@ async function withRetry<T>(
   stage: string,
 ): Promise<PipelineResult<T>> {
   const { maxAttempts, baseDelayMs, maxDelayMs } = { ...DEFAULT_RETRY_POLICY, ...policy };
-  let lastError: unknown;
 
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    try {
-      return ok(await fn(attempt));
-    } catch (e) {
-      lastError = e;
-      if (attempt < maxAttempts) {
-        await sleep(Math.min(baseDelayMs * 2 ** (attempt - 1), maxDelayMs));
-      }
-    }
+  try {
+    const data = await retry(fn, {
+      attempts: maxAttempts,
+      delayMs: (attempt) => Math.min(baseDelayMs * 2 ** (attempt - 1), maxDelayMs),
+    });
+    return ok(data);
+  } catch (e) {
+    return fail(TrustFlowError.retryExhausted(stage, maxAttempts, e));
   }
-
-  return fail(TrustFlowError.retryExhausted(stage, maxAttempts, lastError));
 }
 
 /**

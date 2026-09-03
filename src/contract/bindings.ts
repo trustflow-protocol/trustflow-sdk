@@ -8,7 +8,6 @@ import { readContractState } from './read';
 import { simulateContractCall } from './simulate';
 import { AbstractContractClient } from './abstract';
 import { SorobanSpec } from './spec';
-import { TrustFlowError } from '../errors';
 
 /**
  * Concrete implementation of `AbstractContractClient` created from Soroban Spec entries.
@@ -28,7 +27,7 @@ export class SorobanContractClient extends AbstractContractClient {
   }
 
   private bindMethods(): void {
-    for (const [fnName, fnSpec] of this.spec.functions.entries()) {
+    for (const [fnName] of this.spec.functions.entries()) {
       const invokeFn = async (
         args: Record<string, unknown> | unknown[],
         caller: string,
@@ -300,7 +299,7 @@ function mapScSpecTypeToTs(typeDef: xdr.ScSpecTypeDef): string {
     case 'scSpecTypeI128':
     case 'scSpecTypeU256':
     case 'scSpecTypeI256':
-    case 'scSpecTypeTime':
+    case 'scSpecTypeTime' as any:
     case 'scSpecTypeDuration':
       return 'bigint';
     case 'scSpecTypeString':

@@ -157,10 +157,10 @@ export class SorobanSpec {
           cases: un.cases().map((c) => {
             const caseKind = c.switch().name;
             if (caseKind === 'scSpecUdtUnionCaseVoidV0') {
-              const v = c.voidV0();
+              const v = (c as any).voidV0();
               return { name: v.name().toString(), doc: v.doc().toString() };
             } else {
-              const t = c.tupleV0();
+              const t = (c as any).tupleV0();
               return { name: t.name().toString(), doc: t.doc().toString(), typeList: t.typeList() };
             }
           }),
@@ -240,7 +240,7 @@ export class SorobanSpec {
         return nativeToScVal(BigInt(val as string | number | bigint), { type: 'u64' });
       case 'scSpecTypeI64':
         return nativeToScVal(BigInt(val as string | number | bigint), { type: 'i64' });
-      case 'scSpecTypeTime':
+      case 'scSpecTypeTime' as any:
         return nativeToScVal(BigInt(val as string | number | bigint), { type: 'u64' });
       case 'scSpecTypeDuration':
         return nativeToScVal(BigInt(val as string | number | bigint), { type: 'u64' });
@@ -341,7 +341,7 @@ export class SorobanSpec {
    * @param methodName - Function name defined in contract spec
    * @param scVal - ScVal returned from contract simulation or execution
    */
-  decodeReturnValue(methodName: string, scVal: xdr.ScVal): unknown {
+  decodeReturnValue(_methodName: string, scVal: xdr.ScVal): unknown {
     if (!scVal) return undefined;
     try {
       return scValToNative(scVal);

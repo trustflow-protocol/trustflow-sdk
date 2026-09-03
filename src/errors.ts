@@ -21,7 +21,8 @@ export type TrustFlowErrorCode =
   | 'RETRY_EXHAUSTED'
   | 'NETWORK_ERROR'
   | 'AUTH_ERROR'
-  | 'TIMEOUT';
+  | 'TIMEOUT'
+  | 'INVALID_CONTRACT_CALL';
 
 export class TrustFlowError extends Error {
   readonly code: TrustFlowErrorCode;
