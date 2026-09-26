@@ -164,51 +164,153 @@ Fluent builder: `.setDepositor().setBeneficiary().setAmount().build()`
 - `.getDispute(escrowId)` — get dispute status (automatic retry on transient backend failures)
 
 ## Auth
+
+The TrustFlow backend uses a challenge-response authentication flow to issue session tokens.
+
+### Challenge-Sign Flow
+
+1. **Request Challenge** — Call `requestChallenge(apiUrl, address)` to get a unique signing challenge from the backend
+   - Returns: `{ challenge: string; expiresAt: number; address: string }`
+   - The backend generates a unique challenge string and returns an expiry timestamp
+   - Throws: `TrustFlowError` with code 'CONNECTION_ERROR' if the backend is unreachable
+
+2. **Sign Challenge** — Using your wallet adapter, sign the challenge string as raw UTF-8 bytes
+   - The backend expects a raw ed25519 signature over the UTF-8-encoded challenge string, base64-encoded
+   - Example with Stellar Keypair:
+     ```typescript
+     import { Keypair } from '@stellar/stellar-sdk';
+     
+     const keypair = Keypair.fromSecret(secretKey);
+     const challengeBytes = Buffer.from(challenge, 'utf-8');
+     const signature = keypair.sign(challengeBytes).toString('base64');
+     ```
+   - Or use your wallet directly:
+     ```typescript
+     const wallet = await connectWallet('freighter');
+     const signature = await getFreighter().sign(challengeXdr, 'TESTNET');
+     // (Note: Freighter expects XDR format, not raw challenge string)
+     ```
+
+3. **Verify & Get Token** — Call `verifyAndGetToken(apiUrl, address, signature)` to exchange your signature for a session token
+   - Returns: `Promise<string>` (JWT/session token)
+   - Throws: `TrustFlowError` with code 'UNAUTHORIZED' if the signature is invalid or verification fails
+
+### Session Management
+
+After obtaining a token, persist it using the session storage functions:
+
+- `saveSession(token, address, expiresAt?)` — Persists the session token
+  - Browser: uses `localStorage` automatically
+  - Node/CLI/backend: uses in-memory storage by default (not persistent across restarts); call `configureSessionStorage()` to override
+  
+- `loadSession()` → `Session | null` — Retrieves a saved session
+  - Returns null if no session exists or if it has expired
+  
+- `isSessionExpired(session?)` → `boolean` — Checks if a session token has passed its expiry time
+  - **Note:** `expiresAt` is a client-side estimate (15 minutes by default) since the backend currently doesn't return a token TTL
+  - Do not rely on this for security-sensitive decisions; always handle `401` from the backend even when this returns `false`
+  - Tracked in [#82](https://github.com/trustflow-protocol/trustflow-sdk/issues/82)
+  
+- `clearSession()` — Removes the token from storage
+  
+- `configureSessionStorage(adapter)` — Override the storage backend (for Node.js durability or tests)
+  ```typescript
+  configureSessionStorage({
+    get: (key) => myFileOrRedisStore.get(key),
+    set: (key, value) => myFileOrRedisStore.set(key, value),
+    remove: (key) => myFileOrRedisStore.delete(key),
+  });
+  ```
+
+### Functions
+
 - `requestChallenge(apiUrl, address, options?)` — get signing challenge with retry-aware backend transport
 - `verifyAndGetToken(apiUrl, address, signature, options?)` — exchange signature for JWT with retry-aware backend transport
+- `saveSession(token, address, expiresAt?)` — persist session token (auto-detects browser vs Node storage)
+- `loadSession()` → `Session | null` — retrieve saved session token
+- `isSessionExpired(session?)` → `boolean` — check token expiry (client-side estimate)
+- `clearSession()` — remove token from storage
+- `configureSessionStorage(adapter)` — override storage backend
 
 ## Wallet Module
 
-Wallet integration utilities for connecting to Stellar wallets (Freighter and Albedo) and managing wallet connections.
+Wallet integration utilities for connecting to Stellar wallets (Freighter, Albedo, and others) and managing connections.
+
+### Supported Wallet Types
+
+- `'freighter'` — Freighter browser extension (default)
+- `'albedo'` — Albedo web-based signer
+- `'xbull'` — xBull wallet
+- `'manual'` — Manual signing (reserved for future use)
 
 ### Exported Functions
 
-- `connectWallet(walletType)` — Initiates connection to a specified wallet
-  - `walletType`: 'freighter' | 'albedo'
-  - Returns a `WalletConnection` with methods for signing and requesting payments
+- `connectWallet(walletType?)` — Initiates connection to a specified wallet
+  - `walletType` (optional): One of 'freighter', 'albedo', 'xbull', 'manual'; defaults to 'freighter'
+  - Returns a `WalletConnection` (plain data object with type, publicKey, and network)
+  - **Throws** `TrustFlowError` with code 'UNAUTHORIZED' if wallet not supported or not installed
   
 - `disconnectWallet()` — Disconnects from the currently connected wallet
+  - Most Stellar wallets don't expose a disconnect API, so this is a no-op in practice
   
-- `getFreighter()` — Gets the Freighter wallet adapter if installed
-  - Returns the Freighter API instance or throws if not available
-  - Check with `isFreighterInstalled()` first
+- `getFreighter()` — Gets the Freighter wallet adapter (the low-level API)
+  - Throws `TrustFlowError` if Freighter is not installed
+  - Returns the Freighter instance for direct wallet API access
   
 - `isFreighterInstalled()` — Checks whether Freighter browser extension is installed
+  - Returns `Promise<boolean>` (async; must be awaited)
   - Useful for conditional UI rendering
-  
+
 - `getAlbedo()` — Gets the Albedo wallet adapter
-  - Initializes Albedo integration for web-based signing
+  - Returns the Albedo instance (does not throw if unavailable; returns null or throws on actual use)
 
 ### Types
 
-- `WalletType` — 'freighter' | 'albedo'
-- `WalletConnection` — Represents an active wallet connection with sign/payment methods
-- `WalletAdapter` — Interface for wallet adapters
+- `WalletType` — Union of supported types: `'freighter' | 'albedo' | 'xbull' | 'manual'`
+- `WalletConnection` — Plain data object representing an active connection:
+  ```typescript
+  interface WalletConnection {
+    type: WalletType;        // The wallet type
+    publicKey: string;       // The connected Stellar address
+    network: string;         // The network name (e.g., 'TESTNET', 'PUBLIC')
+  }
+  ```
+  Note: This object contains connection state only. To sign, obtain the wallet adapter directly from `getFreighter()` or similar.
+  
+- `WalletAdapter` — Interface for wallet provider APIs (not returned by `connectWallet`):
+  ```typescript
+  interface WalletAdapter {
+    type: WalletType;
+    isAvailable(): Promise<boolean>;
+    connect(): Promise<WalletConnection>;
+    sign(xdr: string, network: string): Promise<string>;  // Sign an XDR transaction
+    disconnect(): Promise<void>;
+  }
+  ```
 
 ### Example
 
 ```typescript
-import { connectWallet, disconnectWallet, isFreighterInstalled } from '@trustflow/sdk';
+import { connectWallet, isFreighterInstalled } from '@trustflow/sdk';
 
 // Check if Freighter is available
-if (isFreighterInstalled()) {
-  const wallet = await connectWallet('freighter');
-  const publicKey = await wallet.getPublicKey();
-  console.log('Connected:', publicKey);
+const installed = await isFreighterInstalled();
+if (!installed) {
+  console.log('Freighter not installed');
+  return;
 }
 
-// Later: disconnect
-await disconnectWallet();
+// Connect to Freighter
+try {
+  const wallet = await connectWallet('freighter');
+  console.log('Connected:', wallet.publicKey);
+  console.log('Network:', wallet.network);
+  // wallet.publicKey is now available for signing operations
+} catch (error) {
+  if (error instanceof TrustFlowError && error.code === 'UNAUTHORIZED') {
+    console.log('Wallet connection denied');
+  }
+}
 ```
 
 ## Event Parsing Utilities (`src/events.ts`)
@@ -329,65 +431,158 @@ if (!result.ok) {
 }
 ```
 
-## Error Handling (`TrustFlowError` & `TrustFlowErrorCode`)
+## Error Handling
 
-The SDK throws or returns `TrustFlowError` instances across operations (client instantiation, escrow operations, contract simulation, multi-sig operations, and wallet connections). Both `TrustFlowError` and its `TrustFlowErrorCode` type union are exported from the package root:
+The SDK uses three error handling patterns depending on the API layer:
+
+### Error Pattern Overview
+
+| Pattern | APIs | Return Type | When It Throws |
+|---------|------|-------------|-----------------|
+| **Throws TrustFlowError** | Function-style (createEscrow, releaseEscrow), wallet functions, auth functions, TrustFlowClient.connect() | N/A | On any validation or network failure |
+| **Returns SDKResult<T>** | TrustFlowEscrowClient methods (createEscrow, fund, release), DisputeClient, ProfileClient, JurorClient | `{ ok: true; data: T }` or `{ ok: false; error: string }` | Never (errors are wrapped in result) |
+| **Returns PipelineResult<T>** | TransactionPipeline methods (assemble, simulate, prepare, buildFeeBump, submit, run) | `{ ok: true; data: T }` or `{ ok: false; error: TrustFlowError }` | Never (errors include typed code and cause) |
+
+### Throws TrustFlowError
+Used by function-style APIs and initialization. Suitable for scripts and one-off operations:
 
 ```typescript
-import { TrustFlowClient, TrustFlowError, type TrustFlowErrorCode } from '@trustflow/sdk';
+import { TrustFlowClient, TrustFlowError, createEscrow } from '@trustflow/sdk';
 
 try {
   const client = new TrustFlowClient({ contractId: '' });
 } catch (error) {
   if (error instanceof TrustFlowError) {
-    console.error(`TrustFlow error [${error.code}]: ${error.message}`);
-    if (error.code === 'INVALID_CONFIG') {
-      // handle configuration error
-    }
+    console.error(`Error [${error.code}]: ${error.message}`);
   }
+}
+
+try {
+  const escrow = await createEscrow(client, {
+    sender: 'GSENDER...',
+    recipient: 'GRECIPIENT...',
+    amountStroops: 100_000_000n,
+    durationBlocks: 1000,
+  });
+} catch (error) {
+  if (error instanceof TrustFlowError && error.code === 'VALIDATION_ERROR') {
+    console.log('Invalid input:', error.message);
+  }
+}
+```
+
+### Returns SDKResult<T>
+Used by class-based high-level clients (TrustFlowEscrowClient, DisputeClient, etc.):
+
+```typescript
+const escrowClient = new TrustFlowEscrowClient(config);
+const result = await escrowClient.createEscrow(params);
+
+if (result.ok) {
+  console.log('Created escrow:', result.data.escrowId);
+} else {
+  console.log('Failed:', result.error); // error is a string, not an error code
+}
+```
+
+Note: Errors are strings, not error codes, so you cannot branch on error type.
+
+### Returns PipelineResult<T>
+Used by TransactionPipeline for multi-stage operations with typed error codes:
+
+```typescript
+const pipeline = new TransactionPipeline(client);
+const result = await pipeline.run({
+  sourceAccount: senderPublicKey,
+  operations: [contract.call('release', ...args)],
+  signers: [senderKeypair],
+  submit: { feeBump: { feeSource: sponsorKeypair } },
+});
+
+if (!result.ok) {
+  console.error(`[${result.error.code}]: ${result.error.message}`);
+  if (result.error.code === 'SUBMISSION_ERROR') {
+    // Retry or escalate
+  } else if (result.error.code === 'FEE_BUMP_ERROR') {
+    // Handle fee-bump failure
+  }
+} else {
+  console.log('confirmed:', result.data.hash, 'feeBumped:', result.data.feeBumped);
+}
+```
+
+### TrustFlowError & TrustFlowErrorCode
+
+Both `TrustFlowError` and its `TrustFlowErrorCode` type union are exported from the package root:
+
+```typescript
+import { TrustFlowClient, TrustFlowError, type TrustFlowErrorCode } from '@trustflow/sdk';
+
+// Thrown by function-style and initialization APIs
+try {
+  const client = new TrustFlowClient({ contractId: '' });
+} catch (error) {
+  if (error instanceof TrustFlowError) {
+    console.error(`TrustFlow error [${error.code}]: ${error.message}`);
+  }
+}
+
+// Returned (in error.error) by TransactionPipeline
+const result = await pipeline.run(...);
+if (!result.ok) {
+  // result.error is a TrustFlowError instance with .code and .cause
+  console.error(result.error.code, result.error.message, result.error.cause);
 }
 ```
 
 ### Error Codes (`TrustFlowErrorCode`)
 
-| Error Code | Description |
-|---|---|
-| `CONNECTION_ERROR` | Network/RPC connection failure |
-| `CONTRACT_ERROR` | Contract invocation error or contract failure |
-| `VALIDATION_ERROR` | Input or schema validation failure |
-| `UNAUTHORIZED` | Unauthorized action or missing wallet permissions |
-| `NOT_FOUND` | Requested entity, escrow, or resource not found |
-| `SIMULATION_ERROR` | Soroban transaction simulation failed |
-| `SIGNING_ERROR` | Transaction signing failed |
-| `INVALID_CONFIG` | Invalid or missing client configuration |
-| `NOT_CONNECTED` | Operation attempted before client connected |
-| `BALANCE_FETCH_ERROR` | Failed to query balance from Horizon/RPC |
-| `MULTISIG_ERROR` | Generic multi-sig workflow error |
-| `MULTISIG_THRESHOLD_NOT_MET` | Signatures collected is less than required threshold |
-| `MULTISIG_ALREADY_SIGNED` | Signer has already signed this operation |
-| `MULTISIG_EXPIRED` | Multi-sig operation expired |
-| `MULTISIG_INVALID_SIGNER` | Address is not an authorized multi-sig signer |
-| `MULTISIG_XDR_ERROR` | XDR serialization or decoding error during multi-sig operations |
-| `ASSEMBLY_ERROR` | Soroban transaction assembly failure |
-| `FEE_BUMP_ERROR` | Fee-bump transaction construction failure |
-| `SUBMISSION_ERROR` | Transaction submission to RPC failed |
-| `RETRY_EXHAUSTED` | Retry attempts exceeded for the operation |
-| `NETWORK_ERROR` | Transport/network level error |
-| `AUTH_ERROR` | Authentication challenge or verification failure |
-| `TIMEOUT` | Operation timed out |
+| Error Code | Produced By | Description |
+|---|---|---|
+| `CONNECTION_ERROR` | Auth, client connection, backend API | Network/RPC connection failure or backend unreachable |
+| `CONTRACT_ERROR` | Contract invocation | Contract returned an error or failed |
+| `VALIDATION_ERROR` | Escrow functions, wallet functions, client init | Input or schema validation failure |
+| `UNAUTHORIZED` | Wallet connection, auth flow, wallet not supported | Unauthorized action, missing permissions, or unsupported wallet |
+| `NOT_FOUND` | Escrow queries | Requested escrow or resource not found |
+| `SIMULATION_ERROR` | TransactionPipeline.simulate/prepare | Soroban transaction simulation failed |
+| `SIGNING_ERROR` | *Reserved* (not produced yet; tracked in [#292](https://github.com/trustflow-protocol/trustflow-sdk/issues/292)) | Transaction signing failed |
+| `INVALID_CONFIG` | TrustFlowClient constructor | Invalid or missing client configuration (e.g., missing contractId) |
+| `NOT_CONNECTED` | Client methods before connect() | Operation attempted before client connected |
+| `BALANCE_FETCH_ERROR` | TrustFlowClient.getBalance() | Failed to query balance from Horizon/RPC |
+| `MULTISIG_ERROR` | MultiSigEscrowClient (internally) | Generic multi-sig workflow error; callers receive `{ ok: false; error: string }` in SDKResult instead |
+| `MULTISIG_THRESHOLD_NOT_MET` | *Reserved* (not produced; MultiSigEscrowClient returns SDKResult strings) | Signatures collected less than required threshold |
+| `MULTISIG_ALREADY_SIGNED` | *Reserved* | Signer has already signed this operation |
+| `MULTISIG_EXPIRED` | *Reserved* | Multi-sig operation expired |
+| `MULTISIG_INVALID_SIGNER` | *Reserved* | Address not an authorized multi-sig signer |
+| `MULTISIG_XDR_ERROR` | *Reserved* | XDR serialization/decoding error during multi-sig |
+| `ASSEMBLY_ERROR` | TransactionPipeline.assemble | Soroban transaction assembly failure |
+| `FEE_BUMP_ERROR` | TransactionPipeline.buildFeeBump | Fee-bump transaction construction failure |
+| `SUBMISSION_ERROR` | TransactionPipeline.submit | Transaction submission to RPC failed |
+| `RETRY_EXHAUSTED` | TransactionPipeline (any stage) | Retry attempts exceeded for the operation |
+| `NETWORK_ERROR` | Backend API, RPC | Transport/network level error |
+| `AUTH_ERROR` | Auth challenge/verification | Authentication challenge or verification failure |
+| `TIMEOUT` | *Reserved* (not produced yet; tracked in [#215](https://github.com/trustflow-protocol/trustflow-sdk/issues/215)) | Operation timed out |
+| `INVALID_CONTRACT_CALL` | Contract invocation | Invalid contract method or arguments |
+
+**Legend:**
+- **Produced By**: Indicates which SDK APIs generate this code
+- **Reserved**: Error code is defined and exported, but nothing in `src/` currently produces it; reserved for future use or internal-only errors
+- ***Reserved (not produced; X returns Y instead)***: Code is defined but intentionally not used because the API returns a different error format
 
 ### Static Factory Methods
 
-- `TrustFlowError.wrap(error: unknown, code?: TrustFlowErrorCode)`
-- `TrustFlowError.notFound(resource: string)`
-- `TrustFlowError.unauthorized(action: string)`
-- `TrustFlowError.validation(field: string, message: string)`
-- `TrustFlowError.multiSigThresholdNotMet(collected: number, required: number)`
-- `TrustFlowError.multiSigExpired(operationId: string)`
-- `TrustFlowError.multiSigInvalidSigner(address: string)`
-- `TrustFlowError.multiSigXdrError(detail: string)`
-- `TrustFlowError.assemblyFailed(detail: string, cause?: unknown)`
-- `TrustFlowError.simulationFailed(detail: string, cause?: unknown)`
-- `TrustFlowError.feeBumpFailed(detail: string, cause?: unknown)`
-- `TrustFlowError.submissionFailed(detail: string, cause?: unknown)`
-- `TrustFlowError.retryExhausted(stage: string, attempts: number, cause?: unknown)`
+Create pre-formatted errors:
+
+- `TrustFlowError.wrap(error: unknown, code?: TrustFlowErrorCode)` — Wrap any error
+- `TrustFlowError.notFound(resource: string)` — 'NOT_FOUND' code
+- `TrustFlowError.unauthorized(action: string)` — 'UNAUTHORIZED' code
+- `TrustFlowError.validation(field: string, message: string)` — 'VALIDATION_ERROR' code
+- `TrustFlowError.multiSigThresholdNotMet(collected: number, required: number)` — 'MULTISIG_THRESHOLD_NOT_MET' code
+- `TrustFlowError.multiSigExpired(operationId: string)` — 'MULTISIG_EXPIRED' code
+- `TrustFlowError.multiSigInvalidSigner(address: string)` — 'MULTISIG_INVALID_SIGNER' code
+- `TrustFlowError.multiSigXdrError(detail: string)` — 'MULTISIG_XDR_ERROR' code
+- `TrustFlowError.assemblyFailed(detail: string, cause?: unknown)` — 'ASSEMBLY_ERROR' code
+- `TrustFlowError.simulationFailed(detail: string, cause?: unknown)` — 'SIMULATION_ERROR' code
+- `TrustFlowError.feeBumpFailed(detail: string, cause?: unknown)` — 'FEE_BUMP_ERROR' code
+- `TrustFlowError.submissionFailed(detail: string, cause?: unknown)` — 'SUBMISSION_ERROR' code
+- `TrustFlowError.retryExhausted(stage: string, attempts: number, cause?: unknown)` — 'RETRY_EXHAUSTED' code
