@@ -299,7 +299,7 @@ function mapScSpecTypeToTs(typeDef: xdr.ScSpecTypeDef): string {
     case 'scSpecTypeI128':
     case 'scSpecTypeU256':
     case 'scSpecTypeI256':
-    case 'scSpecTypeTime' as any:
+    case 'scSpecTypeTimepoint':
     case 'scSpecTypeDuration':
       return 'bigint';
     case 'scSpecTypeString':

@@ -277,12 +277,12 @@ export class SorobanSpec {
         return nativeToScVal(BigInt(val as string | number | bigint), { type: 'u64' });
       case 'scSpecTypeI64':
         return nativeToScVal(BigInt(val as string | number | bigint), { type: 'i64' });
-      case 'scSpecTypeTime' as any:
-        return nativeToScVal(BigInt(val as string | number | bigint), { type: 'u64' });
+      case 'scSpecTypeTimepoint':
+        return nativeToScVal(BigInt(val as string | number | bigint), { type: 'timepoint' });
       case 'scSpecTypeDuration':
-        return nativeToScVal(BigInt(val as string | number | bigint), { type: 'u64' });
+        return nativeToScVal(BigInt(val as string | number | bigint), { type: 'duration' });
       case 'scSpecTypeU128':
-        return nativeToScVal(BigInt(val as string | number | bigint), { type: 'i128' });
+        return nativeToScVal(BigInt(val as string | number | bigint), { type: 'u128' });
       case 'scSpecTypeI128':
         return nativeToScVal(BigInt(val as string | number | bigint), { type: 'i128' });
       case 'scSpecTypeU256':

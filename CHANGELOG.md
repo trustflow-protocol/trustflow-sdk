@@ -1,6 +1,11 @@
 # Changelog
 
 ## [Unreleased]
+- Fixed `SorobanSpec.valToScVal` emitting the wrong `ScVal` type for three spec types (#264):
+  `u128` is now `scvU128` (values in [2^127, 2^128) no longer overflow an i128), `duration` is
+  `scvDuration` and `timepoint` is `scvTimepoint`. The misspelled `'scSpecTypeTime' as any` case
+  in `spec.ts` and `bindings.ts` is now `scSpecTypeTimepoint`, so generated bindings type
+  timepoint arguments as `bigint`.
 - Fixed `SorobanSpec` throwing `TypeError: c.voidV0 is not a function` for any contract spec
   containing a union type: `indexEntries` now uses the typed `voidCase()` / `tupleCase()` / `.type()`
   accessors (the public `SpecUnionCase.typeList` field is unchanged) (#263). `parseEntries` now

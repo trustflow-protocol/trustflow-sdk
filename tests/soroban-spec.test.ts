@@ -1,5 +1,6 @@
-import { xdr } from '@stellar/stellar-sdk';
+import { scValToNative, xdr } from '@stellar/stellar-sdk';
 import { SorobanSpec } from '../src/contract/spec';
+import { generateTypeScriptBindings } from '../src/contract/bindings';
 import { TrustFlowError } from '../src/errors';
 
 // Real `xdr` objects only — `@stellar/stellar-sdk` is intentionally not mocked
@@ -8,6 +9,10 @@ import { TrustFlowError } from '../src/errors';
 const t = {
   u32: () => xdr.ScSpecTypeDef.scSpecTypeU32(),
   string: () => xdr.ScSpecTypeDef.scSpecTypeString(),
+  timepoint: () => xdr.ScSpecTypeDef.scSpecTypeTimepoint(),
+  duration: () => xdr.ScSpecTypeDef.scSpecTypeDuration(),
+  u128: () => xdr.ScSpecTypeDef.scSpecTypeU128(),
+  i128: () => xdr.ScSpecTypeDef.scSpecTypeI128(),
 };
 
 function voidCase(name: string): xdr.ScSpecUdtUnionCaseV0 {
@@ -145,5 +150,72 @@ describe('SorobanSpec entry parsing (#263)', () => {
     ]);
 
     expect([...spec.functions.keys()]).toEqual(['ping', 'b64', 'hex', 'raw']);
+  });
+});
+
+describe('SorobanSpec u128 / duration / timepoint encoding (#264)', () => {
+  const spec = new SorobanSpec([
+    fnEntry('schedule', [
+      { name: 'at', type: t.timepoint() },
+      { name: 'window', type: t.duration() },
+      { name: 'amount', type: t.u128() },
+    ]),
+  ]);
+
+  it('emits scvTimepoint, scvDuration and scvU128 for the three spec types', () => {
+    const scVals = spec.encodeArgs('schedule', [5, 6, 7]);
+
+    expect(scVals.map((v) => v.switch().name)).toEqual(['scvTimepoint', 'scvDuration', 'scvU128']);
+  });
+
+  it('encodes a u128 in [2^127, 2^128) without error and without losing precision', () => {
+    for (const big of [2n ** 127n, 2n ** 127n + 12345n, 2n ** 128n - 1n]) {
+      const [, , amount] = spec.encodeArgs('schedule', [1n, 1n, big]);
+
+      expect(amount.switch().name).toBe('scvU128');
+      expect(scValToNative(amount)).toBe(big);
+    }
+  });
+
+  it('encodes each type through the named-argument form too', () => {
+    const scVals = spec.encodeArgs('schedule', { at: 5n, window: 6n, amount: 7n });
+
+    expect(scVals.map((v) => v.switch().name)).toEqual(['scvTimepoint', 'scvDuration', 'scvU128']);
+  });
+
+  it('still encodes i128 as scvI128', () => {
+    const i128Spec = new SorobanSpec([fnEntry('f', [{ name: 'a', type: t.i128() }])]);
+
+    expect(i128Spec.encodeArgs('f', [-5n])[0].switch().name).toBe('scvI128');
+  });
+
+  it('decodeReturnValue round-trips timepoint, duration and u128 values', () => {
+    const values: [string, bigint][] = [
+      ['scvTimepoint', 1_700_000_000n],
+      ['scvDuration', 3_600n],
+      ['scvU128', 2n ** 127n + 9n],
+    ];
+    const encoded = spec.encodeArgs('schedule', values.map(([, v]) => v));
+
+    encoded.forEach((scVal, i) => {
+      expect(scVal.switch().name).toBe(values[i][0]);
+      expect(spec.decodeReturnValue('schedule', scVal)).toBe(values[i][1]);
+    });
+  });
+});
+
+describe('generateTypeScriptBindings timepoint mapping (#264)', () => {
+  it('maps timepoint and duration arguments to bigint instead of unknown', () => {
+    const code = generateTypeScriptBindings(
+      [
+        fnEntry('schedule', [
+          { name: 'at', type: t.timepoint() },
+          { name: 'window', type: t.duration() },
+        ]),
+      ],
+      { className: 'ScheduleClient' },
+    );
+
+    expect(code).toContain('{ at: bigint; window: bigint }');
   });
 });
