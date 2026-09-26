@@ -61,6 +61,16 @@ export interface SpecUnion {
   cases: SpecUnionCase[];
 }
 
+/** Short, safe description of a value's type for error messages. */
+function describeValue(value: unknown): string {
+  if (value === null) return 'null';
+  if (Array.isArray(value)) return 'array';
+  if (typeof value === 'string') return `string ${JSON.stringify(value.slice(0, 40))}`;
+  if (typeof value === 'bigint') return `bigint ${value}`;
+  if (typeof value === 'object') return 'object';
+  return `${typeof value} ${String(value)}`;
+}
+
 /**
  * Parser and validator for Soroban Contract Specification (XDR spec entries).
  * Converts JavaScript values to/from Soroban `xdr.ScVal` types according to contract ABIs.
@@ -75,31 +85,60 @@ export class SorobanSpec {
   /**
    * Constructs a new SorobanSpec parser.
    *
-   * @param specEntries - Array of Soroban spec entries (XDR base64 strings, ScSpecEntry objects, or Buffers)
+   * @param specEntries - Array of Soroban spec entries (XDR base64/hex strings, ScSpecEntry
+   * objects, or Buffers). Entries from a second copy of `@stellar/stellar-sdk` are accepted
+   * as long as they expose `toXDR()`.
+   * @throws {TrustFlowError} `INVALID_CONTRACT_CALL` naming the index of any entry that is
+   * not a supported type or cannot be decoded
    */
   constructor(specEntries: (xdr.ScSpecEntry | string | Uint8Array | Buffer)[]) {
     this.entries = this.parseEntries(specEntries);
     this.indexEntries();
   }
 
-  private parseEntries(
-    inputList: (xdr.ScSpecEntry | string | Uint8Array | Buffer)[],
-  ): xdr.ScSpecEntry[] {
+  private parseEntries(inputList: unknown[]): xdr.ScSpecEntry[] {
     const result: xdr.ScSpecEntry[] = [];
-    for (const item of inputList) {
-      if (item instanceof xdr.ScSpecEntry) {
-        result.push(item);
-      } else if (typeof item === 'string') {
-        try {
-          result.push(xdr.ScSpecEntry.fromXDR(item, 'base64'));
-        } catch {
-          result.push(xdr.ScSpecEntry.fromXDR(item, 'hex'));
-        }
-      } else if (item instanceof Uint8Array || Buffer.isBuffer(item)) {
-        result.push(xdr.ScSpecEntry.fromXDR(Buffer.from(item)));
+    inputList.forEach((item, index) => {
+      try {
+        result.push(SorobanSpec.parseEntry(item, index));
+      } catch (err) {
+        if (err instanceof TrustFlowError) throw err;
+        throw new TrustFlowError(
+          `Invalid spec entry at index ${index}: ${err instanceof Error ? err.message : String(err)}`,
+          'INVALID_CONTRACT_CALL',
+          err,
+        );
+      }
+    });
+    return result;
+  }
+
+  private static parseEntry(item: unknown, index: number): xdr.ScSpecEntry {
+    if (item instanceof xdr.ScSpecEntry) {
+      return item;
+    }
+    if (typeof item === 'string') {
+      try {
+        return xdr.ScSpecEntry.fromXDR(item, 'base64');
+      } catch {
+        return xdr.ScSpecEntry.fromXDR(item, 'hex');
       }
     }
-    return result;
+    if (item instanceof Uint8Array || Buffer.isBuffer(item)) {
+      return xdr.ScSpecEntry.fromXDR(Buffer.from(item));
+    }
+    if (
+      typeof item === 'object' &&
+      item !== null &&
+      typeof (item as { toXDR?: unknown }).toXDR === 'function'
+    ) {
+      return xdr.ScSpecEntry.fromXDR(Buffer.from((item as { toXDR(): Uint8Array }).toXDR()));
+    }
+    throw new TrustFlowError(
+      `Unsupported spec entry at index ${index}: expected an xdr.ScSpecEntry, a base64/hex string, ` +
+        `a Uint8Array/Buffer or an object with toXDR(), got ${describeValue(item)}`,
+      'INVALID_CONTRACT_CALL',
+    );
   }
 
   private indexEntries(): void {
@@ -155,14 +194,12 @@ export class SorobanSpec {
           doc: un.doc().toString(),
           lib: un.lib().toString(),
           cases: un.cases().map((c) => {
-            const caseKind = c.switch().name;
-            if (caseKind === 'scSpecUdtUnionCaseVoidV0') {
-              const v = (c as any).voidV0();
+            if (c.switch().name === 'scSpecUdtUnionCaseVoidV0') {
+              const v = c.voidCase();
               return { name: v.name().toString(), doc: v.doc().toString() };
-            } else {
-              const t = (c as any).tupleV0();
-              return { name: t.name().toString(), doc: t.doc().toString(), typeList: t.typeList() };
             }
+            const t = c.tupleCase();
+            return { name: t.name().toString(), doc: t.doc().toString(), typeList: t.type() };
           }),
         };
         this.unions.set(unName, specUn);

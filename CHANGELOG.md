@@ -1,6 +1,12 @@
 # Changelog
 
 ## [Unreleased]
+- Fixed `SorobanSpec` throwing `TypeError: c.voidV0 is not a function` for any contract spec
+  containing a union type: `indexEntries` now uses the typed `voidCase()` / `tupleCase()` / `.type()`
+  accessors (the public `SpecUnionCase.typeList` field is unchanged) (#263). `parseEntries` now
+  throws a `TrustFlowError` (`INVALID_CONTRACT_CALL`) naming the offending index for unsupported
+  or undecodable entries instead of silently dropping them, and accepts duck-typed entries that
+  expose `toXDR()`.
 - Exported `disputeEscrow` and the `DisputeClientOptions`, `EscrowMonitorOnError`,
   `EscrowMonitorErrorContext` and `EscrowMonitorErrorPhase` types from the escrow barrel, so they
   resolve from `@trustflow/sdk` and `@trustflow/sdk/escrow` (#268). `examples/dispute.ts` now uses
