@@ -308,9 +308,11 @@ responsibility until a native, backend-backed `MultiSigStateStore` lands — tra
 
 ### Architecture Highlights
 
-- **Result Types**: No thrown exceptions in public APIs — all errors returned as `SDKResult<T>`
-- **Immutable Builders**: Fluent APIs like `EscrowBuilder` for parameter construction
-- **Network Agnostic**: Easily switch between Testnet and Mainnet
+- **No thrown exceptions in class APIs** — `TrustFlowEscrowClient` returns `SDKResult<T>` (never throws) for safe, predictable error handling
+- **Multi-stage pipeline** — `TransactionPipeline` orchestrates assemble → simulate → prepare → fee-bump → submit with typed `PipelineResult<T>` errors and built-in exponential backoff retries
+- **Two API styles** — Class-based for long-lived services, function-based for scripts (throws `TrustFlowError` on failure)
+- **Typed error codes** — Branch on `error.code` (ASSEMBLY_ERROR, SIMULATION_ERROR, etc.) instead of message strings
+- **Network Agnostic**: Easily switch between Testnet and Mainnet with custom RPC URLs
 - **Pure Utilities**: Side-effect-free helper functions for formatting and validation
 
 Read more in [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md)
@@ -373,23 +375,31 @@ We welcome contributions! To get started:
 3. Run tests: `npm test`
 4. Submit a PR
 
-Please ensure:
-- Tests pass (`npm test`)
-- Linting passes (`npm run lint`)
-- Code is formatted (`npm run format`)
+**New contributors**: Start with [CONTRIBUTING.md](./CONTRIBUTING.md) for a complete setup guide, development workflow, and conventions. It covers:
+- Node.js setup and available npm commands
+- Running tests and checking coverage
+- Code style and documentation requirements
+- Branch naming, commit messages, and changelog entries
+- How to get listed in [CONTRIBUTORS.md](./CONTRIBUTORS.md)
 
-Check [CONTRIBUTING.md](./CONTRIBUTING.md) for detailed guidelines.
+For detailed issue and PR templates, see [.github/ISSUE_TEMPLATE/](./.github/ISSUE_TEMPLATE/) and [.github/PULL_REQUEST_TEMPLATE.md](./.github/PULL_REQUEST_TEMPLATE.md).
 
 ---
 
 ## 🔒 Security
 
+We take security seriously. This SDK builds and signs financial transactions on Stellar.
+
+**Report security issues privately** via [SECURITY.md](./SECURITY.md) — do not open public issues for vulnerabilities.
+
+Security features:
 - **Strict Linting**: ESLint strict mode enforced across the codebase
 - **Input Validation**: All parameters validated with Zod schemas
 - **Type Safety**: TypeScript strict mode prevents runtime errors
 - **Test Coverage**: Critical paths covered by Jest integration tests
+- **Supported versions**: See [SECURITY.md](./SECURITY.md) for versioning and expected response times
 
-Report security issues to: security@trustflow.xyz
+For the full security policy, including scope, supported versions, and responsible disclosure guidelines, see [SECURITY.md](./SECURITY.md).
 
 ---
 
