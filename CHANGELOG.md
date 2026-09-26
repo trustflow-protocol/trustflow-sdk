@@ -1,6 +1,29 @@
 # Changelog
 
 ## [Unreleased]
+- `SorobanSpec.encodeArgs` / `valToScVal` now validate instead of coercing (#265). Missing,
+  misspelled or extra named arguments (and struct fields), non-boolean `bool` values, non-integer
+  or out-of-range `u32`/`i32`/64/128/256-bit integers, non-hex or wrong-length `Bytes`/`BytesN`,
+  wrong tuple arity, malformed addresses and invalid symbols all raise a `TrustFlowError`
+  (`INVALID_CONTRACT_CALL`) naming the parameter path (for example `args.metadata[2]`), and no raw
+  `RangeError`, `SyntaxError` or `TypeError` escapes for bad input. `Option<T>` arguments may be
+  omitted. **Behaviour change:** values that were previously coerced (`'false'` or `1` as a
+  `bool`, a number as a `String`) are now rejected.
+- Fixed `SorobanSpec.valToScVal` emitting the wrong `ScVal` type for three spec types (#264):
+  `u128` is now `scvU128` (values in [2^127, 2^128) no longer overflow an i128), `duration` is
+  `scvDuration` and `timepoint` is `scvTimepoint`. The misspelled `'scSpecTypeTime' as any` case
+  in `spec.ts` and `bindings.ts` is now `scSpecTypeTimepoint`, so generated bindings type
+  timepoint arguments as `bigint`.
+- Fixed `SorobanSpec` throwing `TypeError: c.voidV0 is not a function` for any contract spec
+  containing a union type: `indexEntries` now uses the typed `voidCase()` / `tupleCase()` / `.type()`
+  accessors (the public `SpecUnionCase.typeList` field is unchanged) (#263). `parseEntries` now
+  throws a `TrustFlowError` (`INVALID_CONTRACT_CALL`) naming the offending index for unsupported
+  or undecodable entries instead of silently dropping them, and accepts duck-typed entries that
+  expose `toXDR()`.
+- Exported `disputeEscrow` and the `DisputeClientOptions`, `EscrowMonitorOnError`,
+  `EscrowMonitorErrorContext` and `EscrowMonitorErrorPhase` types from the escrow barrel, so they
+  resolve from `@trustflow/sdk` and `@trustflow/sdk/escrow` (#268). `examples/dispute.ts` now uses
+  the public escrow entry point and a test fails if `disputeEscrow` is dropped from the barrels.
 - Added a tag-triggered `release.yml` workflow (#305) that verifies, then publishes to npm with
   provenance and creates the GitHub Release; `scripts/verify-release.js` checks the tag,
   `package.json`, `SDK_VERSION`, the changelog heading and the `npm pack` file list. Documented in

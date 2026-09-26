@@ -58,6 +58,10 @@ console.log(`Balance: ${balance} XLM`);
   TrustFlow contract; encodes contract call arguments via `buildDisputeArgs`. Distinct from
   `DisputeClient.raiseDispute` below, which records the dispute with the backend API instead of
   the on-chain contract.
+- Importable from the package root and from the escrow subpath:
+  `import { disputeEscrow } from '@trustflow/sdk'` or `from '@trustflow/sdk/escrow'`. The
+  `DisputeClientOptions`, `EscrowMonitorOnError`, `EscrowMonitorErrorContext` and
+  `EscrowMonitorErrorPhase` types are exported from the same entry points.
 
 ## MultiSigEscrowClient
 
