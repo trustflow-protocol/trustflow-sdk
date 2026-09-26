@@ -1,6 +1,10 @@
 # Changelog
 
 ## [Unreleased]
+- Exported `disputeEscrow` and the `DisputeClientOptions`, `EscrowMonitorOnError`,
+  `EscrowMonitorErrorContext` and `EscrowMonitorErrorPhase` types from the escrow barrel, so they
+  resolve from `@trustflow/sdk` and `@trustflow/sdk/escrow` (#268). `examples/dispute.ts` now uses
+  the public escrow entry point and a test fails if `disputeEscrow` is dropped from the barrels.
 - Added a tag-triggered `release.yml` workflow (#305) that verifies, then publishes to npm with
   provenance and creates the GitHub Release; `scripts/verify-release.js` checks the tag,
   `package.json`, `SDK_VERSION`, the changelog heading and the `npm pack` file list. Documented in
