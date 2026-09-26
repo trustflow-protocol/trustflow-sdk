@@ -5,6 +5,7 @@ module.exports = {
   },
   testEnvironment: 'node',
   testMatch: ['**/tests/**/*.test.ts'],
+  testPathIgnorePatterns: ['/node_modules/', '/tests/e2e/'],
   setupFilesAfterEnv: ['<rootDir>/tests/support/scval-matchers.ts'],
   collectCoverageFrom: ['src/**/*.ts', '!src/**/*.d.ts'],
   coverageReporters: ['text-summary', 'lcov', 'json-summary'],

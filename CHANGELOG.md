@@ -1,23 +1,17 @@
 # Changelog
 
 ## [Unreleased]
-- `TransactionPipeline.run()` now serializes runs per source account (#311) — later runs for
-  the same account and network wait (across all pipeline instances in the process) until the
-  earlier one confirms, fails or times out, so concurrent runs no longer build transactions
-  with the same sequence number. Runs for different accounts stay parallel. New
-  `serialize` (default `true`) and `queueTimeoutMs` options on `RunPipelineParams` (a wait
-  past the timeout returns a `TIMEOUT` error) and `TransactionPipeline.queueDepth()`. The
-  queue is in-process only; `assemble`/`submit` bypass it.
-- `signWithFreighter` now verifies the wallet's answer (#292) — the signed envelope must parse
-  and be the same transaction (same hash and kind) with an added signature, optionally signed
-  by `expectedSigner`; wallet rejections, failures, network mismatches and bad responses throw
-  `SIGNING_ERROR` with the original error as `cause`. `network` is typed as `Network`, and the
-  function and its types are exported from `@trustflow/sdk/wallet`.
-- Added tests for `TransactionPipeline.simulate`, `run()` failure paths and confirmation
-  polling (#310), reaching full line coverage of `src/tx-pipeline/pipeline.ts`.
-- Added the Freighter integration spike write-up `docs/spikes/issue-312-freighter-integration.md`
-  (#312), based on the published `@stellar/freighter-api` sources; live-extension checks are
-  listed there as still outstanding.
+- Added a tag-triggered `release.yml` workflow (#305) that verifies, then publishes to npm with
+  provenance and creates the GitHub Release; `scripts/verify-release.js` checks the tag,
+  `package.json`, `SDK_VERSION`, the changelog heading and the `npm pack` file list. Documented in
+  `docs/RELEASING.md`.
+- Added an end-to-end suite (`npm run test:e2e`) and CI job that run against a local
+  `stellar/quickstart` network (#306). `TrustFlowClient` and `TransactionPipeline` now honour the
+  Stellar SDK's global `Config.setAllowHttp(true)` for plain-http RPC URLs.
+- Added real React tests (jsdom and `@testing-library/react`) for `useWallet`, `useBalance`,
+  `useTransaction` and `useEscrow`, run on React 18 and 19 in CI (#289).
+- Added unit tests for `escrow/create.ts`, `cancel.ts` and `release.ts` validation and argument
+  encoding (#276).
 - Added `./escrow`, `./wallet`, and `./utils` subpath exports (#100) — the
   README's Quick Start (`import { createEscrow } from '@trustflow/sdk/escrow'`,
   and likewise `/wallet`, `/utils`) previously failed with

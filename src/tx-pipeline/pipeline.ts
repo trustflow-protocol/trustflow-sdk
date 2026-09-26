@@ -1,5 +1,6 @@
 import {
   BASE_FEE,
+  Config,
   FeeBumpTransaction,
   Transaction,
   TransactionBuilder,
@@ -124,7 +125,7 @@ export class TransactionPipeline {
   private readonly server: rpc.Server;
 
   constructor(private readonly client: TrustFlowClient) {
-    this.server = new rpc.Server(client.rpcUrl);
+    this.server = new rpc.Server(client.rpcUrl, { allowHttp: Config.isAllowHttp() });
   }
 
   /**
