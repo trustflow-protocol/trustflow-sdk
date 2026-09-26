@@ -1,6 +1,14 @@
 # Changelog
 
 ## [Unreleased]
+- `SorobanSpec.encodeArgs` / `valToScVal` now validate instead of coercing (#265). Missing,
+  misspelled or extra named arguments (and struct fields), non-boolean `bool` values, non-integer
+  or out-of-range `u32`/`i32`/64/128/256-bit integers, non-hex or wrong-length `Bytes`/`BytesN`,
+  wrong tuple arity, malformed addresses and invalid symbols all raise a `TrustFlowError`
+  (`INVALID_CONTRACT_CALL`) naming the parameter path (for example `args.metadata[2]`), and no raw
+  `RangeError`, `SyntaxError` or `TypeError` escapes for bad input. `Option<T>` arguments may be
+  omitted. **Behaviour change:** values that were previously coerced (`'false'` or `1` as a
+  `bool`, a number as a `String`) are now rejected.
 - Fixed `SorobanSpec.valToScVal` emitting the wrong `ScVal` type for three spec types (#264):
   `u128` is now `scvU128` (values in [2^127, 2^128) no longer overflow an i128), `duration` is
   `scvDuration` and `timepoint` is `scvTimepoint`. The misspelled `'scSpecTypeTime' as any` case

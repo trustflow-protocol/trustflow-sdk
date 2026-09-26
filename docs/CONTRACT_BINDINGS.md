@@ -22,6 +22,10 @@ and user-defined types. The SDK **does not fetch the spec from the network**; yo
 | `xdr.ScSpecEntry` | used as is |
 | `string` | parsed as base64 XDR, falling back to hex XDR |
 | `Uint8Array` / `Buffer` | parsed as raw XDR |
+| object with `toXDR()` | serialised and parsed (an entry from a second copy of `@stellar/stellar-sdk`) |
+
+Anything else, or an item that cannot be decoded, throws a `TrustFlowError` (`INVALID_CONTRACT_CALL`)
+naming the item's index rather than being skipped.
 
 Each array item must be exactly **one** spec entry. A compiled contract embeds its spec in the
 `contractspecv0` custom section of the WASM file, and that raw section is a concatenation of entries,
@@ -105,29 +109,31 @@ Encoding is done by `SorobanSpec.valToScVal` (used by `encodeArgs`), decoding by
 | `ScSpecType` | Accepted JS input | `ScVal` produced | Decoded output | Status |
 | --- | --- | --- | --- | --- |
 | `Val` | anything `nativeToScVal` accepts | inferred by `nativeToScVal` | native value | ok |
-| `Bool` | any value, coerced with `Boolean()` | `bool` | `boolean` | coerced, not validated (#265) |
+| `Bool` | a real `boolean` only | `bool` | `boolean` | ok |
 | `Void` | ignored | `void` | `undefined` | ok |
-| `U32`, `I32` | number, coerced with `Number()` | `u32` / `i32` | `number` | no range or type check (#265) |
-| `U64`, `I64` | `bigint`, number or numeric string (via `BigInt()`) | `u64` / `i64` | `bigint` | no range check (#265) |
-| `U128` | `bigint`, number or numeric string | `i128` instead of `u128` | `bigint` | **gap**: wrong `ScVal` type (#264) |
-| `I128` | `bigint`, number or numeric string | `i128` | `bigint` | ok |
-| `U256`, `I256` | `bigint`, number or numeric string | `u256` / `i256` | `bigint` | ok |
-| `Timepoint` | not matched by the encoder, falls through to `nativeToScVal(val)` | inferred, not `timepoint` | native value | **gap** (#264) |
-| `Duration` | `bigint`, number or numeric string | `u64` instead of `duration` | `bigint` | **gap**: wrong `ScVal` type (#264) |
-| `Bytes`, `BytesN` | hex string, `Uint8Array` or `Buffer` | `bytes` | `Buffer` | `BytesN` length is not checked |
-| `String` | anything, coerced with `String()` | `string` | `string` | coerced (#265) |
-| `Symbol` | anything, coerced with `String()` | `symbol` | `string` | coerced (#265) |
-| `Address` | address string (`G...` / `C...`), coerced with `String()` | `address` | `string` | ok |
+| `U32`, `I32` | integer `number`, `bigint` or base-10 integer string, range-checked | `u32` / `i32` | `number` | ok |
+| `U64`, `I64` | `bigint`, safe-integer `number` or base-10 integer string, range-checked | `u64` / `i64` | `bigint` | ok |
+| `U128` | `bigint`, safe-integer `number` or base-10 integer string, range-checked | `u128` | `bigint` | ok |
+| `I128` | `bigint`, safe-integer `number` or base-10 integer string, range-checked | `i128` | `bigint` | ok |
+| `U256`, `I256` | `bigint`, safe-integer `number` or base-10 integer string, range-checked | `u256` / `i256` | `bigint` | ok |
+| `Timepoint` | as `U64` | `timepoint` | `bigint` | ok |
+| `Duration` | as `U64` | `duration` | `bigint` | ok |
+| `Bytes`, `BytesN` | even-length hex string, `Uint8Array` or `Buffer`; `BytesN` must have exactly `N` bytes | `bytes` | `Buffer` | ok |
+| `String` | a `string` | `string` | `string` | ok |
+| `Symbol` | a string of 1-32 characters from `A-Z a-z 0-9 _` | `symbol` | `string` | ok |
+| `Address` | address string (`G...` / `C...`); a malformed address throws `INVALID_CONTRACT_CALL` | `address` | `string` | ok |
 | `Option<T>` | `null` / `undefined` for none, otherwise a `T` | `void` or the inner value | inner value or `null` | ok |
 | `Vec<T>` | array of `T` (other values throw `INVALID_CONTRACT_CALL`) | `vec` | array | ok |
-| `Tuple` | array, encoded item by item (length is not checked against the spec) | `vec` | array | ok |
-| `Map<K, V>` | `Map`, or a plain object (keys are strings) | `map` | `Map` or object | **gap**: entries are not key-sorted (#266); any other input silently becomes an empty map |
+| `Tuple` | array with exactly as many items as the spec, encoded item by item | `vec` | array | ok |
+| `Map<K, V>` | `Map`, or a plain object (keys are strings); any other input throws | `map` | `Map` or object | **gap**: entries are not key-sorted (#266) |
 | `Result<T, E>` | not matched by the encoder, falls through to `nativeToScVal(val)` | inferred | native value | unsupported |
-| UDT struct | object with one property per spec field | `map` keyed by field name | object | **gap**: keys are in spec order, not sorted (#266) |
+| UDT struct | object with one property per spec field (unknown or missing non-`Option` fields throw) | `map` keyed by field name | object | **gap**: keys are in spec order, not sorted (#266) |
 | UDT enum, UDT union | not matched by name, falls through to `nativeToScVal(val)` | inferred | native value | **gap** (#270) |
 
-Additionally, **a spec that contains a union type currently makes `new SorobanSpec(...)` throw a
-`TypeError`** while indexing the entries (#263), so bindings cannot be created for such contracts yet.
+Encoding validates instead of coercing. For an object argument map a missing key or an extra key is
+rejected (`Option<T>` parameters may be omitted), and every failure raises a `TrustFlowError` with
+code `INVALID_CONTRACT_CALL` that names the parameter and, for nested values, the path, for example
+`Invalid args.metadata[2]: expected an integer (u32) ...`.
 
 ## 4. `read_*`, `invoke` and `simulate_*`
 

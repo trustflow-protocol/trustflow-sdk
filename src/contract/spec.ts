@@ -71,6 +71,101 @@ function describeValue(value: unknown): string {
   return `${typeof value} ${String(value)}`;
 }
 
+type IntegerScType =
+  | 'u32'
+  | 'i32'
+  | 'u64'
+  | 'i64'
+  | 'timepoint'
+  | 'duration'
+  | 'u128'
+  | 'i128'
+  | 'u256'
+  | 'i256';
+
+interface IntegerSpec {
+  /** `nativeToScVal` type name, also used as the expected type in error messages. */
+  type: IntegerScType;
+  min: bigint;
+  max: bigint;
+  /** 32-bit types are passed to `nativeToScVal` as a `number`, wider types as a `bigint`. */
+  asNumber?: boolean;
+}
+
+const unsignedMax = (bits: bigint): bigint => 2n ** bits - 1n;
+const signedMin = (bits: bigint): bigint => -(2n ** (bits - 1n));
+const signedMax = (bits: bigint): bigint => 2n ** (bits - 1n) - 1n;
+
+/** Integer-like spec types, keyed by `ScSpecType` name. */
+const INTEGER_SPECS: Record<string, IntegerSpec> = {
+  scSpecTypeU32: { type: 'u32', min: 0n, max: unsignedMax(32n), asNumber: true },
+  scSpecTypeI32: { type: 'i32', min: signedMin(32n), max: signedMax(32n), asNumber: true },
+  scSpecTypeU64: { type: 'u64', min: 0n, max: unsignedMax(64n) },
+  scSpecTypeI64: { type: 'i64', min: signedMin(64n), max: signedMax(64n) },
+  scSpecTypeTimepoint: { type: 'timepoint', min: 0n, max: unsignedMax(64n) },
+  scSpecTypeDuration: { type: 'duration', min: 0n, max: unsignedMax(64n) },
+  scSpecTypeU128: { type: 'u128', min: 0n, max: unsignedMax(128n) },
+  scSpecTypeI128: { type: 'i128', min: signedMin(128n), max: signedMax(128n) },
+  scSpecTypeU256: { type: 'u256', min: 0n, max: unsignedMax(256n) },
+  scSpecTypeI256: { type: 'i256', min: signedMin(256n), max: signedMax(256n) },
+};
+
+/** Soroban symbols are 1-32 characters from `[A-Za-z0-9_]`. */
+const SYMBOL_PATTERN = /^[A-Za-z0-9_]{1,32}$/;
+
+function invalidValue(path: string, expected: string, val: unknown): TrustFlowError {
+  return new TrustFlowError(
+    `Invalid ${path}: expected ${expected}, got ${describeValue(val)}`,
+    'INVALID_CONTRACT_CALL',
+  );
+}
+
+/**
+ * Accepts a `bigint`, a safe-integer `number` or a base-10 integer string and checks it against
+ * the range of the spec type. Never coerces (`'abc'`, `1.5`, `NaN` and booleans are rejected).
+ */
+function parseInteger(val: unknown, path: string, spec: IntegerSpec): bigint {
+  let big: bigint;
+  if (typeof val === 'bigint') {
+    big = val;
+  } else if (typeof val === 'number') {
+    if (!Number.isInteger(val)) throw invalidValue(path, `an integer (${spec.type})`, val);
+    if (!Number.isSafeInteger(val)) {
+      throw new TrustFlowError(
+        `Invalid ${path}: ${val} exceeds Number.MAX_SAFE_INTEGER; pass a bigint or a numeric string for ${spec.type}`,
+        'INVALID_CONTRACT_CALL',
+      );
+    }
+    big = BigInt(val);
+  } else if (typeof val === 'string' && /^-?\d+$/.test(val)) {
+    big = BigInt(val);
+  } else {
+    throw invalidValue(path, `an integer (${spec.type}) as a number, bigint or numeric string`, val);
+  }
+
+  if (big < spec.min || big > spec.max) {
+    throw new TrustFlowError(
+      `Invalid ${path}: ${big} is outside the ${spec.type} range [${spec.min}, ${spec.max}]`,
+      'INVALID_CONTRACT_CALL',
+    );
+  }
+  return big;
+}
+
+/** Accepts a `Uint8Array`/`Buffer` or an even-length hex string; anything else is rejected. */
+function parseBytes(val: unknown, path: string): Buffer {
+  if (typeof val === 'string') {
+    if (val.length % 2 !== 0 || !/^[0-9a-fA-F]*$/.test(val)) {
+      throw invalidValue(path, 'a hex string (even length, characters 0-9 a-f) or a Uint8Array', val);
+    }
+    return Buffer.from(val, 'hex');
+  }
+  if (val instanceof Uint8Array) {
+    return Buffer.from(val);
+  }
+  throw invalidValue(path, 'a hex string or a Uint8Array', val);
+}
+
 /**
  * Parser and validator for Soroban Contract Specification (XDR spec entries).
  * Converts JavaScript values to/from Soroban `xdr.ScVal` types according to contract ABIs.
@@ -219,8 +314,15 @@ export class SorobanSpec {
   /**
    * Encodes JS function parameters into an array of Soroban `xdr.ScVal` objects.
    *
+   * Arguments are validated, never coerced: a missing, misspelled or extra named argument, a
+   * value of the wrong type or outside the spec type's range, malformed hex, a wrong `BytesN`
+   * length or wrong tuple arity all raise a {@link TrustFlowError} naming the offending
+   * parameter (for example `args.metadata[2]`). `Option<T>` parameters may be omitted.
+   *
    * @param methodName - Method name defined in contract spec
    * @param args - Positional arguments array or object map of named parameters
+   * @throws {TrustFlowError} `INVALID_CONTRACT_CALL` for an unknown method, a wrong argument
+   * count, unknown or missing named arguments, or any argument that fails validation
    */
   encodeArgs(methodName: string, args: Record<string, unknown> | unknown[]): xdr.ScVal[] {
     const fnSpec = this.getFunction(methodName);
@@ -235,7 +337,18 @@ export class SorobanSpec {
     if (Array.isArray(args)) {
       argsArray = args;
     } else if (typeof args === 'object' && args !== null) {
-      argsArray = fnSpec.inputs.map((inp) => (args as Record<string, unknown>)[inp.name]);
+      const record = args as Record<string, unknown>;
+      const expected = fnSpec.inputs.map((inp) => inp.name);
+      const unknownKeys = Object.keys(record).filter((key) => !expected.includes(key));
+      if (unknownKeys.length > 0) {
+        throw new TrustFlowError(
+          `Unknown argument(s) for method '${methodName}': ${unknownKeys
+            .map((key) => `'${key}'`)
+            .join(', ')}. Expected: ${expected.length > 0 ? expected.join(', ') : '(none)'}`,
+          'INVALID_CONTRACT_CALL',
+        );
+      }
+      argsArray = fnSpec.inputs.map((inp) => record[inp.name]);
     } else {
       throw new TrustFlowError(
         `Invalid arguments for method '${methodName}': expected array or object`,
@@ -250,7 +363,9 @@ export class SorobanSpec {
       );
     }
 
-    return fnSpec.inputs.map((inp, idx) => this.valToScVal(argsArray[idx], inp.type));
+    return fnSpec.inputs.map((inp, idx) =>
+      this.valToScVal(argsArray[idx], inp.type, `args.${inp.name}`),
+    );
   }
 
   /**
@@ -258,111 +373,152 @@ export class SorobanSpec {
    *
    * @param val - JavaScript value to encode
    * @param typeDef - Soroban spec type definition
+   * @param path - Name of the value used in error messages (defaults to `value`); nested
+   * values append `[index]`, `[key]` or `.field`
+   * @throws {TrustFlowError} `INVALID_CONTRACT_CALL` if `val` is not a valid value of `typeDef`
    */
-  valToScVal(val: unknown, typeDef: xdr.ScSpecTypeDef): xdr.ScVal {
+  valToScVal(val: unknown, typeDef: xdr.ScSpecTypeDef, path = 'value'): xdr.ScVal {
+    try {
+      return this.encodeValue(val, typeDef, path);
+    } catch (err) {
+      if (err instanceof TrustFlowError) throw err;
+      throw new TrustFlowError(
+        `Invalid ${path}: ${err instanceof Error ? err.message : String(err)}`,
+        'INVALID_CONTRACT_CALL',
+        err,
+      );
+    }
+  }
+
+  private encodeValue(val: unknown, typeDef: xdr.ScSpecTypeDef, path: string): xdr.ScVal {
     const kind = typeDef.switch().name;
+
+    if (val === undefined && kind !== 'scSpecTypeOption' && kind !== 'scSpecTypeVoid') {
+      throw new TrustFlowError(`Missing required argument ${path}`, 'INVALID_CONTRACT_CALL');
+    }
+
+    const intSpec = INTEGER_SPECS[kind];
+    if (intSpec) {
+      const big = parseInteger(val, path, intSpec);
+      return nativeToScVal(intSpec.asNumber ? Number(big) : big, { type: intSpec.type });
+    }
 
     switch (kind) {
       case 'scSpecTypeVal':
         return nativeToScVal(val);
       case 'scSpecTypeBool':
-        return nativeToScVal(Boolean(val), { type: 'bool' });
+        if (typeof val !== 'boolean') throw invalidValue(path, 'a boolean', val);
+        return nativeToScVal(val, { type: 'bool' });
       case 'scSpecTypeVoid':
         return xdr.ScVal.scvVoid();
-      case 'scSpecTypeU32':
-        return nativeToScVal(Number(val), { type: 'u32' });
-      case 'scSpecTypeI32':
-        return nativeToScVal(Number(val), { type: 'i32' });
-      case 'scSpecTypeU64':
-        return nativeToScVal(BigInt(val as string | number | bigint), { type: 'u64' });
-      case 'scSpecTypeI64':
-        return nativeToScVal(BigInt(val as string | number | bigint), { type: 'i64' });
-      case 'scSpecTypeTimepoint':
-        return nativeToScVal(BigInt(val as string | number | bigint), { type: 'timepoint' });
-      case 'scSpecTypeDuration':
-        return nativeToScVal(BigInt(val as string | number | bigint), { type: 'duration' });
-      case 'scSpecTypeU128':
-        return nativeToScVal(BigInt(val as string | number | bigint), { type: 'u128' });
-      case 'scSpecTypeI128':
-        return nativeToScVal(BigInt(val as string | number | bigint), { type: 'i128' });
-      case 'scSpecTypeU256':
-        return nativeToScVal(BigInt(val as string | number | bigint), { type: 'u256' });
-      case 'scSpecTypeI256':
-        return nativeToScVal(BigInt(val as string | number | bigint), { type: 'i256' });
       case 'scSpecTypeBytes':
-      case 'scSpecTypeBytesN':
-        if (typeof val === 'string') {
-          return nativeToScVal(Buffer.from(val, 'hex'), { type: 'bytes' });
+      case 'scSpecTypeBytesN': {
+        const bytes = parseBytes(val, path);
+        if (kind === 'scSpecTypeBytesN') {
+          const expectedLength = typeDef.bytesN().n();
+          if (bytes.length !== expectedLength) {
+            throw new TrustFlowError(
+              `Invalid ${path}: expected exactly ${expectedLength} bytes, got ${bytes.length}`,
+              'INVALID_CONTRACT_CALL',
+            );
+          }
         }
-        return nativeToScVal(val, { type: 'bytes' });
+        return nativeToScVal(bytes, { type: 'bytes' });
+      }
       case 'scSpecTypeString':
-        return nativeToScVal(String(val), { type: 'string' });
+        if (typeof val !== 'string') throw invalidValue(path, 'a string', val);
+        return nativeToScVal(val, { type: 'string' });
       case 'scSpecTypeSymbol':
-        return nativeToScVal(String(val), { type: 'symbol' });
-      case 'scSpecTypeAddress':
-        return new Address(String(val)).toScVal();
+        if (typeof val !== 'string' || !SYMBOL_PATTERN.test(val)) {
+          throw invalidValue(
+            path,
+            'a symbol (1-32 characters from A-Z, a-z, 0-9 and _)',
+            val,
+          );
+        }
+        return nativeToScVal(val, { type: 'symbol' });
+      case 'scSpecTypeAddress': {
+        if (typeof val !== 'string') throw invalidValue(path, 'a Stellar address string', val);
+        try {
+          return new Address(val).toScVal();
+        } catch (err) {
+          throw new TrustFlowError(
+            `Invalid ${path}: expected a valid Stellar address (G... account or C... contract), got ${describeValue(val)}`,
+            'INVALID_CONTRACT_CALL',
+            err,
+          );
+        }
+      }
       case 'scSpecTypeOption': {
         if (val === null || val === undefined) {
           return xdr.ScVal.scvVoid();
         }
         const innerType = typeDef.option().valueType();
-        return this.valToScVal(val, innerType);
+        return this.valToScVal(val, innerType, path);
       }
       case 'scSpecTypeVec': {
-        if (!Array.isArray(val)) {
-          throw new TrustFlowError(`Expected array for vector argument`, 'INVALID_CONTRACT_CALL');
-        }
+        if (!Array.isArray(val)) throw invalidValue(path, 'an array', val);
         const elemType = typeDef.vec().elementType();
-        const converted = val.map((v) => this.valToScVal(v, elemType));
+        const converted = val.map((v, i) => this.valToScVal(v, elemType, `${path}[${i}]`));
         return xdr.ScVal.scvVec(converted);
       }
       case 'scSpecTypeMap': {
         const keyType = typeDef.map().keyType();
         const valType = typeDef.map().valueType();
-        const entries: xdr.ScMapEntry[] = [];
+        let pairs: [unknown, unknown][];
         if (val instanceof Map) {
-          for (const [k, v] of val.entries()) {
-            entries.push(
-              new xdr.ScMapEntry({
-                key: this.valToScVal(k, keyType),
-                val: this.valToScVal(v, valType),
-              }),
-            );
-          }
-        } else if (typeof val === 'object' && val !== null) {
-          for (const [k, v] of Object.entries(val)) {
-            entries.push(
-              new xdr.ScMapEntry({
-                key: this.valToScVal(k, keyType),
-                val: this.valToScVal(v, valType),
-              }),
-            );
-          }
+          pairs = [...val.entries()];
+        } else if (typeof val === 'object' && val !== null && !Array.isArray(val)) {
+          pairs = Object.entries(val);
+        } else {
+          throw invalidValue(path, 'a Map or an object', val);
         }
+        const entries = pairs.map(
+          ([k, v]) =>
+            new xdr.ScMapEntry({
+              key: this.valToScVal(k, keyType, `${path}.<key ${String(k)}>`),
+              val: this.valToScVal(v, valType, `${path}[${String(k)}]`),
+            }),
+        );
         return xdr.ScVal.scvMap(entries);
       }
       case 'scSpecTypeTuple': {
-        if (!Array.isArray(val)) {
-          throw new TrustFlowError(`Expected array for tuple argument`, 'INVALID_CONTRACT_CALL');
-        }
+        if (!Array.isArray(val)) throw invalidValue(path, 'an array', val);
         const types = typeDef.tuple().valueTypes();
-        const converted = val.map((v, i) => this.valToScVal(v, types[i]));
+        if (val.length !== types.length) {
+          throw new TrustFlowError(
+            `Invalid ${path}: expected a tuple of ${types.length} element(s), got ${val.length}`,
+            'INVALID_CONTRACT_CALL',
+          );
+        }
+        const converted = val.map((v, i) => this.valToScVal(v, types[i], `${path}[${i}]`));
         return xdr.ScVal.scvVec(converted);
       }
       case 'scSpecTypeUdt': {
         const udtName = typeDef.udt().name().toString();
         const structSpec = this.structs.get(udtName);
-        if (structSpec && typeof val === 'object' && val !== null) {
-          const mapEntries: xdr.ScMapEntry[] = [];
-          for (const field of structSpec.fields) {
-            const fieldValue = (val as Record<string, unknown>)[field.name];
-            mapEntries.push(
-              new xdr.ScMapEntry({
-                key: nativeToScVal(field.name, { type: 'symbol' }),
-                val: this.valToScVal(fieldValue, field.type),
-              }),
+        if (structSpec) {
+          if (typeof val !== 'object' || val === null || Array.isArray(val)) {
+            throw invalidValue(path, `an object for struct ${udtName}`, val);
+          }
+          const record = val as Record<string, unknown>;
+          const fieldNames = structSpec.fields.map((f) => f.name);
+          const unknownKeys = Object.keys(record).filter((key) => !fieldNames.includes(key));
+          if (unknownKeys.length > 0) {
+            throw new TrustFlowError(
+              `Invalid ${path}: unknown field(s) for struct ${udtName}: ${unknownKeys
+                .map((key) => `'${key}'`)
+                .join(', ')}. Expected: ${fieldNames.join(', ')}`,
+              'INVALID_CONTRACT_CALL',
             );
           }
+          const mapEntries = structSpec.fields.map(
+            (field) =>
+              new xdr.ScMapEntry({
+                key: nativeToScVal(field.name, { type: 'symbol' }),
+                val: this.valToScVal(record[field.name], field.type, `${path}.${field.name}`),
+              }),
+          );
           return xdr.ScVal.scvMap(mapEntries);
         }
         return nativeToScVal(val);
