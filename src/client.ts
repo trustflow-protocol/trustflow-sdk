@@ -10,6 +10,7 @@ import { TrustFlowError } from './errors';
 import type { Network, ClientConfig } from './types';
 import { IPFSStorage } from './storage';
 import { SimpleCache } from './utils/cache';
+import { RequestDeduplicator } from './utils/dedup';
 
 /** Default TTL for opt-in Horizon balance caching. */
 export const DEFAULT_BALANCE_CACHE_TTL_MS = 5_000;
@@ -30,6 +31,7 @@ export class TrustFlowClient {
   private server: Horizon.Server;
   private sorobanServer?: rpc.Server;
   private readonly balanceCache?: SimpleCache<string, string>;
+  private readonly deduplicator = new RequestDeduplicator();
   private _connected: boolean = false;
 
   readonly network: Network;
