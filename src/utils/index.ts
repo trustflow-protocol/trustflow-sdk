@@ -10,3 +10,5 @@ export * from './request-validation';
 export * from './connection-pool';
 export * from './circuit-breaker';
 export { TrustFlowError } from '../errors';
+
+export * from './version';

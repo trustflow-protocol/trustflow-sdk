@@ -5,7 +5,10 @@ import {
   NETWORK_PASSPHRASES,
   DEFAULT_NETWORK,
   SDK_VERSION,
+  DEFAULT_API_VERSION,
 } from './constants';
+import { negotiateApiVersion, ApiVersionNegotiationResult } from './utils/version';
+import { logger } from './utils/logger';
 import { TrustFlowError } from './errors';
 import type { Network, ClientConfig } from './types';
 import { IPFSStorage } from './storage';
@@ -38,6 +41,7 @@ export class TrustFlowClient {
   readonly apiBaseUrl?: string;
   readonly apiKey?: string;
   readonly version: string = SDK_VERSION;
+  readonly apiVersion: string;
   /** IPFS upload helper — `client.storage.upload(file)`. */
   readonly storage: IPFSStorage;
 
@@ -76,6 +80,7 @@ export class TrustFlowClient {
     this.rpcUrl = config.rpcUrl ?? SOROBAN_RPC_URLS[this.network];
     this.apiBaseUrl = config.apiBaseUrl;
     this.apiKey = config.apiKey;
+    this.apiVersion = config.apiVersion ?? DEFAULT_API_VERSION;
     this.storage = new IPFSStorage(config.ipfs);
     this.balanceCache = config.balanceCache
       ? new SimpleCache(config.balanceCache.ttlMs ?? DEFAULT_BALANCE_CACHE_TTL_MS)
@@ -211,6 +216,7 @@ export class TrustFlowClient {
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
       'X-SDK-Version': this.version,
+      'X-API-Version': this.apiVersion,
     };
 
     if (this.apiKey) {
@@ -263,6 +269,7 @@ export class TrustFlowClient {
     rpcUrl: string;
     apiConfigured: boolean;
     version: string;
+    apiVersion: string;
   } {
     return {
       network: this.network,
@@ -270,7 +277,43 @@ export class TrustFlowClient {
       rpcUrl: this.rpcUrl,
       apiConfigured: Boolean(this.apiBaseUrl && this.apiKey),
       version: this.version,
+      apiVersion: this.apiVersion,
     };
   }
-}
 
+  /**
+   * Verifies compatibility with the backend API version.
+   *
+   * @param options - Options for compatibility verification
+   * @param options.warnOnly - When true, emits warning instead of throwing on mismatch
+   * @returns Version negotiation and compatibility details
+   */
+  async verifyApiCompatibility(options?: { warnOnly?: boolean }): Promise<ApiVersionNegotiationResult> {
+    if (!this.apiBaseUrl) {
+      return {
+        serverVersion: 'N/A',
+        clientVersion: this.apiVersion,
+        compatible: true,
+      };
+    }
+
+    const result = await negotiateApiVersion(this.apiBaseUrl, {
+      clientVersion: this.apiVersion,
+      timeoutMs: 5000,
+    });
+
+    if (!result.compatible && !options?.warnOnly) {
+      throw TrustFlowError.versionMismatch(
+        this.apiVersion,
+        result.serverVersion,
+        result.warning,
+      );
+    }
+
+    if (result.warning) {
+      logger.warn(`[TrustFlow API Version] ${result.warning}`);
+    }
+
+    return result;
+  }
+}
