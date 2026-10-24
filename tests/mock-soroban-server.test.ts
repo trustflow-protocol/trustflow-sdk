@@ -7,8 +7,9 @@ import {
 import { TrustFlowClient } from '../src/client';
 import { readContractState } from '../src/contract/read';
 import { simulateTransaction } from '../src/contract/simulation';
-import { Account, TransactionBuilder, BASE_FEE, Contract } from '@stellar/stellar-sdk';
+import { Account, TransactionBuilder, BASE_FEE, Contract, rpc } from '@stellar/stellar-sdk';
 import { TrustFlowError } from '../src/errors';
+import { TransactionPipeline } from '../src/tx-pipeline/pipeline';
 
 describe('Offline Mock Soroban RPC Server Provider (Issue #381)', () => {
   const contractId = 'CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4';
@@ -247,6 +248,45 @@ describe('Offline Mock Soroban RPC Server Provider (Issue #381)', () => {
       expect(result).toBeDefined();
       expect((result as any).id).toBe('offline-escrow-1');
       expect((result as any).amount).toBe(100_000_000n);
+    });
+
+    it('includes ledger in getTransaction on SUCCESS/FAILED so TransactionPipeline resolves ledger (#633)', async () => {
+      const mockRpc = createMockSorobanServer({
+        txStatus: 'SUCCESS',
+        latestLedger: 1234,
+      });
+
+      const directTx = await mockRpc.getTransaction('hash');
+      expect(directTx.ledger).toBe(1234);
+
+      mockRpc.setTxStatus('NOT_FOUND');
+      const notFoundTx = await mockRpc.getTransaction('hash');
+      expect((notFoundTx as any).ledger).toBeUndefined();
+
+      mockRpc.setTxStatus('SUCCESS');
+      const sendSpy = jest
+        .spyOn(rpc.Server.prototype, 'sendTransaction')
+        .mockImplementation((tx) => mockRpc.sendTransaction(tx) as any);
+      const getSpy = jest
+        .spyOn(rpc.Server.prototype, 'getTransaction')
+        .mockImplementation((hash) => mockRpc.getTransaction(hash) as any);
+
+      try {
+        const client = new TrustFlowClient({
+          contractId,
+          rpcServer: mockRpc as any,
+        });
+        const pipeline = new TransactionPipeline(client);
+        const tx = buildTestTx('release_escrow', 'esc-1');
+        const sub = await pipeline.submit(tx, { pollIntervalMs: 1 });
+
+        expect(sub.ok).toBe(true);
+        if (!sub.ok) return;
+        expect(sub.data.ledger).toBe(1234);
+      } finally {
+        sendSpy.mockRestore();
+        getSpy.mockRestore();
+      }
     });
   });
 });
