@@ -1,8 +1,13 @@
-import { TransactionBuilder, FeeBumpTransaction, Keypair, xdr } from '@stellar/stellar-sdk';
-import { TrustFlowError } from '../errors';
-import { logger } from '../utils/logger';
-import { isValidEscrowId, isValidStellarAddress } from '../utils/validation';
-import type { ContractConfig } from '../types/contract';
+import {
+  TransactionBuilder,
+  FeeBumpTransaction,
+  Keypair,
+  xdr,
+} from "@stellar/stellar-sdk";
+import { TrustFlowError } from "../errors";
+import { logger } from "../utils/logger";
+import { isValidEscrowId, isValidStellarAddress } from "../utils/validation";
+import type { ContractConfig } from "../types/contract";
 import type {
   InitMultiSigParams,
   AddSignatureParams,
@@ -19,9 +24,9 @@ import type {
   GetXdrResult,
   MultiSigStateSnapshot,
   ImportStateResult,
-} from '../types/multisig';
-import { MULTISIG_SNAPSHOT_VERSION } from '../types/multisig';
-import { submitTransaction } from '../stellar/transaction';
+} from "../types/multisig";
+import { MULTISIG_SNAPSHOT_VERSION } from "../types/multisig";
+import { submitTransaction } from "../stellar/transaction";
 
 /**
  * Default length of time (ms) a terminal-status operation (`submitted` or
@@ -36,9 +41,9 @@ export const DEFAULT_MULTISIG_RETENTION_MS = 5 * 60 * 1000;
  * have it stored on the operation.
  */
 const VALID_MULTISIG_OPERATION_TYPES: readonly MultiSigOperationType[] = [
-  'release',
-  'cancel',
-  'dispute',
+  "release",
+  "cancel",
+  "dispute",
 ];
 
 /**
@@ -110,13 +115,16 @@ export class MultiSigEscrowClient {
       collectedSignatures: [],
       threshold: params.threshold,
       signers: [...params.signers],
-      status: 'pending',
+      status: "pending",
       createdAt: Date.now(),
       expiresAt: params.expiresAt,
     };
 
     this.operations.set(operationId, operation);
-    logger.debug('Multi-sig operation initialized', { operationId, escrowId: params.escrowId });
+    logger.debug("Multi-sig operation initialized", {
+      operationId,
+      escrowId: params.escrowId,
+    });
     return { ok: true, data: { operationId } };
   }
 
@@ -134,16 +142,16 @@ export class MultiSigEscrowClient {
       return { ok: false, error: `Operation ${params.operationId} not found` };
     }
 
-    if (operation.status === 'submitted') {
-      return { ok: false, error: 'Operation already submitted' };
+    if (operation.status === "submitted") {
+      return { ok: false, error: "Operation already submitted" };
     }
-    if (operation.status === 'expired') {
-      return { ok: false, error: 'Operation has expired' };
+    if (operation.status === "expired") {
+      return { ok: false, error: "Operation has expired" };
     }
 
     if (this._isExpired(operation)) {
-      this._markTerminal(operation, 'expired');
-      return { ok: false, error: 'Operation has expired' };
+      this._markTerminal(operation, "expired");
+      return { ok: false, error: "Operation has expired" };
     }
 
     if (!operation.signers.includes(params.signerAddress)) {
@@ -157,7 +165,10 @@ export class MultiSigEscrowClient {
       (s) => s.signerAddress === params.signerAddress,
     );
     if (alreadySigned) {
-      return { ok: false, error: `${params.signerAddress} has already signed this operation` };
+      return {
+        ok: false,
+        error: `${params.signerAddress} has already signed this operation`,
+      };
     }
 
     // Verify the signed XDR: same transaction + valid signature from signer
@@ -179,7 +190,7 @@ export class MultiSigEscrowClient {
       verifiedAt: Date.now(),
     };
     operation.collectedSignatures.push(entry);
-    logger.debug('Multi-sig signature added', {
+    logger.debug("Multi-sig signature added", {
       operationId: params.operationId,
       signer: params.signerAddress,
       collected: operation.collectedSignatures.length,
@@ -188,7 +199,7 @@ export class MultiSigEscrowClient {
     });
 
     if (this._getVerifiedCount(operation) >= operation.threshold) {
-      operation.status = 'ready';
+      operation.status = "ready";
     }
 
     return { ok: true, data: this._buildStatus(operation) };
@@ -205,8 +216,12 @@ export class MultiSigEscrowClient {
       return { ok: false, error: `Operation ${operationId} not found` };
     }
 
-    if (this._isExpired(operation) && operation.status === 'pending') {
-      this._markTerminal(operation, 'expired');
+    if (
+      this._isExpired(operation) &&
+      operation.status !== "submitted" &&
+      operation.status !== "expired"
+    ) {
+      this._markTerminal(operation, "expired");
     }
 
     return { ok: true, data: this._buildStatus(operation) };
@@ -235,15 +250,18 @@ export class MultiSigEscrowClient {
    * @param horizonUrl - Horizon server base URL (e.g. https://horizon-testnet.stellar.org)
    * @returns Transaction hash on success
    */
-  async submitWhenReady(operationId: string, horizonUrl: string): Promise<SubmitMultiSigResult> {
+  async submitWhenReady(
+    operationId: string,
+    horizonUrl: string,
+  ): Promise<SubmitMultiSigResult> {
     const operation = this.operations.get(operationId);
     if (!operation) {
       return { ok: false, error: `Operation ${operationId} not found` };
     }
 
     if (this._isExpired(operation)) {
-      this._markTerminal(operation, 'expired');
-      return { ok: false, error: 'Operation has expired' };
+      this._markTerminal(operation, "expired");
+      return { ok: false, error: "Operation has expired" };
     }
 
     const verifiedCount = this._getVerifiedCount(operation);
@@ -261,15 +279,18 @@ export class MultiSigEscrowClient {
     }
 
     try {
-      logger.debug('Submitting multi-sig operation', { operationId });
+      logger.debug("Submitting multi-sig operation", { operationId });
       const submitted = await submitTransaction(
         assembledResult.data.xdr,
         horizonUrl,
         undefined,
         this.timeoutMs,
       );
-      this._markTerminal(operation, 'submitted');
-      logger.info('Multi-sig operation submitted', { operationId, txHash: submitted.hash });
+      this._markTerminal(operation, "submitted");
+      logger.info("Multi-sig operation submitted", {
+        operationId,
+        txHash: submitted.hash,
+      });
       return {
         ok: true,
         data: {
@@ -279,7 +300,10 @@ export class MultiSigEscrowClient {
         },
       };
     } catch (e) {
-      logger.error('Multi-sig submission failed', { operationId, error: String(e) });
+      logger.error("Multi-sig submission failed", {
+        operationId,
+        error: String(e),
+      });
       return { ok: false, error: `Submission failed: ${String(e)}` };
     }
   }
@@ -298,13 +322,18 @@ export class MultiSigEscrowClient {
       return { ok: false, error: `Operation ${operationId} not found` };
     }
 
-    const verifiedSignatures = operation.collectedSignatures.filter((s) => s.verified);
+    const verifiedSignatures = operation.collectedSignatures.filter(
+      (s) => s.verified,
+    );
     if (verifiedSignatures.length === 0) {
-      return { ok: false, error: 'No verified signatures collected yet' };
+      return { ok: false, error: "No verified signatures collected yet" };
     }
 
     try {
-      const xdrResult = this._mergeSignatures(operation.unsignedXdr, verifiedSignatures);
+      const xdrResult = this._mergeSignatures(
+        operation.unsignedXdr,
+        verifiedSignatures,
+      );
       return { ok: true, data: { xdr: xdrResult } };
     } catch (e) {
       return { ok: false, error: `XDR assembly failed: ${String(e)}` };
@@ -322,7 +351,7 @@ export class MultiSigEscrowClient {
   prune(): void {
     const cutoff = Date.now() - this.retentionMs;
     for (const [operationId, op] of this.operations) {
-      const terminal = op.status === 'submitted' || op.status === 'expired';
+      const terminal = op.status === "submitted" || op.status === "expired";
       if (terminal && op.terminalAt !== undefined && op.terminalAt <= cutoff) {
         this.operations.delete(operationId);
       }
@@ -339,7 +368,9 @@ export class MultiSigEscrowClient {
    */
   listOperations(escrowId: string): MultiSigOperation[] {
     this.prune();
-    return Array.from(this.operations.values()).filter((op) => op.escrowId === escrowId);
+    return Array.from(this.operations.values()).filter(
+      (op) => op.escrowId === escrowId,
+    );
   }
 
   /**
@@ -413,8 +444,8 @@ export class MultiSigEscrowClient {
   private _validateSnapshot(
     snapshot: MultiSigStateSnapshot,
   ): { ok: true } | { ok: false; error: string } {
-    if (!snapshot || typeof snapshot !== 'object') {
-      return { ok: false, error: 'snapshot must be an object' };
+    if (!snapshot || typeof snapshot !== "object") {
+      return { ok: false, error: "snapshot must be an object" };
     }
     if (snapshot.version !== MULTISIG_SNAPSHOT_VERSION) {
       return {
@@ -422,35 +453,56 @@ export class MultiSigEscrowClient {
         error: `snapshot.version ${String(snapshot.version)} is not supported by this SDK (expected ${MULTISIG_SNAPSHOT_VERSION})`,
       };
     }
-    if (typeof snapshot.operationId !== 'string' || !snapshot.operationId) {
-      return { ok: false, error: 'snapshot.operationId must be a non-empty string' };
+    if (typeof snapshot.operationId !== "string" || !snapshot.operationId) {
+      return {
+        ok: false,
+        error: "snapshot.operationId must be a non-empty string",
+      };
     }
-    if (typeof snapshot.escrowId !== 'string' || !snapshot.escrowId) {
-      return { ok: false, error: 'snapshot.escrowId must be a non-empty string' };
+    if (typeof snapshot.escrowId !== "string" || !snapshot.escrowId) {
+      return {
+        ok: false,
+        error: "snapshot.escrowId must be a non-empty string",
+      };
     }
-    if (typeof snapshot.unsignedXdr !== 'string' || !snapshot.unsignedXdr) {
-      return { ok: false, error: 'snapshot.unsignedXdr must be a non-empty string' };
+    if (typeof snapshot.unsignedXdr !== "string" || !snapshot.unsignedXdr) {
+      return {
+        ok: false,
+        error: "snapshot.unsignedXdr must be a non-empty string",
+      };
     }
-    if (typeof snapshot.networkPassphrase !== 'string' || !snapshot.networkPassphrase) {
-      return { ok: false, error: 'snapshot.networkPassphrase must be a non-empty string' };
+    if (
+      typeof snapshot.networkPassphrase !== "string" ||
+      !snapshot.networkPassphrase
+    ) {
+      return {
+        ok: false,
+        error: "snapshot.networkPassphrase must be a non-empty string",
+      };
     }
     if (!Array.isArray(snapshot.signers)) {
-      return { ok: false, error: 'snapshot.signers must be an array' };
+      return { ok: false, error: "snapshot.signers must be an array" };
     }
     for (const [index, signer] of snapshot.signers.entries()) {
-      if (typeof signer !== 'string' || !isValidStellarAddress(signer)) {
-        return { ok: false, error: `snapshot.signers[${index}] is not a valid Stellar address` };
+      if (typeof signer !== "string" || !isValidStellarAddress(signer)) {
+        return {
+          ok: false,
+          error: `snapshot.signers[${index}] is not a valid Stellar address`,
+        };
       }
     }
     if (!Array.isArray(snapshot.collectedSignatures)) {
-      return { ok: false, error: 'snapshot.collectedSignatures must be an array' };
+      return {
+        ok: false,
+        error: "snapshot.collectedSignatures must be an array",
+      };
     }
     for (const [index, entry] of snapshot.collectedSignatures.entries()) {
       if (
         !entry ||
-        typeof entry.signerAddress !== 'string' ||
-        typeof entry.signedXdr !== 'string' ||
-        typeof entry.addedAt !== 'number'
+        typeof entry.signerAddress !== "string" ||
+        typeof entry.signedXdr !== "string" ||
+        typeof entry.addedAt !== "number"
       ) {
         return {
           ok: false,
@@ -458,12 +510,20 @@ export class MultiSigEscrowClient {
         };
       }
     }
-    if (typeof snapshot.threshold !== 'number' || snapshot.threshold < 1) {
-      return { ok: false, error: 'snapshot.threshold must be a number >= 1' };
+    if (typeof snapshot.threshold !== "number" || snapshot.threshold < 1) {
+      return { ok: false, error: "snapshot.threshold must be a number >= 1" };
     }
-    const validStatuses: MultiSigOperationStatus[] = ['pending', 'ready', 'submitted', 'expired'];
+    const validStatuses: MultiSigOperationStatus[] = [
+      "pending",
+      "ready",
+      "submitted",
+      "expired",
+    ];
     if (!validStatuses.includes(snapshot.status)) {
-      return { ok: false, error: `snapshot.status must be one of: ${validStatuses.join(', ')}` };
+      return {
+        ok: false,
+        error: `snapshot.status must be one of: ${validStatuses.join(", ")}`,
+      };
     }
     return { ok: true };
   }
@@ -490,23 +550,28 @@ export class MultiSigEscrowClient {
     return { ...entry, verified: true, verifiedAt: Date.now() };
   }
 
-  private _validateInitParams(params: InitMultiSigParams): InitMultiSigResult | { ok: true } {
-    if (typeof params.escrowId !== 'string' || params.escrowId.trim().length === 0) {
-      return { ok: false, error: 'escrowId is required' };
+  private _validateInitParams(
+    params: InitMultiSigParams,
+  ): InitMultiSigResult | { ok: true } {
+    if (
+      typeof params.escrowId !== "string" ||
+      params.escrowId.trim().length === 0
+    ) {
+      return { ok: false, error: "escrowId is required" };
     }
     if (!isValidEscrowId(params.escrowId)) {
-      return { ok: false, error: 'escrowId must be at most 128 characters' };
+      return { ok: false, error: "escrowId must be at most 128 characters" };
     }
     if (!params.signers || params.signers.length === 0) {
-      return { ok: false, error: 'At least one signer is required' };
+      return { ok: false, error: "At least one signer is required" };
     }
     // `NaN` slips through both comparisons below, and a fractional threshold
     // would silently round the M-of-N requirement, so require an integer here.
     if (!Number.isInteger(params.threshold)) {
-      return { ok: false, error: 'threshold must be an integer' };
+      return { ok: false, error: "threshold must be an integer" };
     }
     if (params.threshold < 1) {
-      return { ok: false, error: 'threshold must be at least 1' };
+      return { ok: false, error: "threshold must be at least 1" };
     }
     if (params.threshold > params.signers.length) {
       return {
@@ -516,7 +581,7 @@ export class MultiSigEscrowClient {
     }
     const uniqueSigners = new Set(params.signers);
     if (uniqueSigners.size !== params.signers.length) {
-      return { ok: false, error: 'Duplicate signer addresses are not allowed' };
+      return { ok: false, error: "Duplicate signer addresses are not allowed" };
     }
     for (const [index, signer] of params.signers.entries()) {
       if (!isValidStellarAddress(signer)) {
@@ -529,14 +594,14 @@ export class MultiSigEscrowClient {
     if (!VALID_MULTISIG_OPERATION_TYPES.includes(params.operationType)) {
       return {
         ok: false,
-        error: `operationType must be one of: ${VALID_MULTISIG_OPERATION_TYPES.join(', ')}`,
+        error: `operationType must be one of: ${VALID_MULTISIG_OPERATION_TYPES.join(", ")}`,
       };
     }
     if (!params.unsignedXdr) {
-      return { ok: false, error: 'unsignedXdr is required' };
+      return { ok: false, error: "unsignedXdr is required" };
     }
     if (!params.networkPassphrase) {
-      return { ok: false, error: 'networkPassphrase is required' };
+      return { ok: false, error: "networkPassphrase is required" };
     }
     if (params.networkPassphrase !== this.config.networkPassphrase) {
       return {
@@ -547,14 +612,20 @@ export class MultiSigEscrowClient {
     // Parsing here rather than at `addSignature` time means a caller learns
     // that the base envelope is unusable before any signer is asked to sign.
     if (!this._isValidEnvelope(params.unsignedXdr, params.networkPassphrase)) {
-      return { ok: false, error: 'unsignedXdr is not a valid Stellar transaction envelope' };
+      return {
+        ok: false,
+        error: "unsignedXdr is not a valid Stellar transaction envelope",
+      };
     }
     if (params.expiresAt !== undefined) {
       if (!Number.isFinite(params.expiresAt)) {
-        return { ok: false, error: 'expiresAt must be a finite UNIX timestamp in milliseconds' };
+        return {
+          ok: false,
+          error: "expiresAt must be a finite UNIX timestamp in milliseconds",
+        };
       }
       if (params.expiresAt <= Date.now()) {
-        return { ok: false, error: 'expiresAt is in the past' };
+        return { ok: false, error: "expiresAt is in the past" };
       }
     }
 
@@ -566,7 +637,10 @@ export class MultiSigEscrowClient {
    * Works for both regular transactions (v0, v1) and fee-bump transactions.
    * For fee-bump transactions, returns both the outer fee-bump hash and the inner transaction hash.
    */
-  private _getTransactionHashes(envelopeXdr: string, networkPassphrase: string): Buffer[] {
+  private _getTransactionHashes(
+    envelopeXdr: string,
+    networkPassphrase: string,
+  ): Buffer[] {
     try {
       const tx = TransactionBuilder.fromXDR(envelopeXdr, networkPassphrase);
       if (tx instanceof FeeBumpTransaction) {
@@ -589,32 +663,49 @@ export class MultiSigEscrowClient {
     baseXdr: string,
     signerAddress: string,
     networkPassphrase: string,
-  ): { ok: true; hash: Buffer; signature: xdr.DecoratedSignature } | { ok: false; error: string } {
+  ):
+    | { ok: true; hash: Buffer; signature: xdr.DecoratedSignature }
+    | { ok: false; error: string } {
     const baseHashes = this._getTransactionHashes(baseXdr, networkPassphrase);
     if (baseHashes.length === 0) {
-      return { ok: false, error: 'base unsignedXdr is not a valid Stellar transaction envelope' };
+      return {
+        ok: false,
+        error: "base unsignedXdr is not a valid Stellar transaction envelope",
+      };
     }
 
-    const signedHashes = this._getTransactionHashes(signedXdr, networkPassphrase);
+    const signedHashes = this._getTransactionHashes(
+      signedXdr,
+      networkPassphrase,
+    );
     if (signedHashes.length === 0) {
-      return { ok: false, error: 'signedXdr is not a valid Stellar transaction envelope' };
+      return {
+        ok: false,
+        error: "signedXdr is not a valid Stellar transaction envelope",
+      };
     }
 
     // 1. Verify transaction hash matches
-    const hasHashMatch = baseHashes.some((b) => signedHashes.some((s) => b.equals(s)));
+    const hasHashMatch = baseHashes.some((b) =>
+      signedHashes.some((s) => b.equals(s)),
+    );
     if (!hasHashMatch) {
       return {
         ok: false,
-        error: 'signedXdr contains a different transaction than the base unsignedXdr',
+        error:
+          "signedXdr contains a different transaction than the base unsignedXdr",
       };
     }
 
     // 2. Verify the signer's signature is present and valid
     let signedEnvelope: xdr.TransactionEnvelope;
     try {
-      signedEnvelope = xdr.TransactionEnvelope.fromXDR(signedXdr, 'base64');
+      signedEnvelope = xdr.TransactionEnvelope.fromXDR(signedXdr, "base64");
     } catch {
-      return { ok: false, error: 'signedXdr is not a valid Stellar transaction envelope' };
+      return {
+        ok: false,
+        error: "signedXdr is not a valid Stellar transaction envelope",
+      };
     }
     const signatures = this._extractSignatures(signedEnvelope);
 
@@ -624,9 +715,11 @@ export class MultiSigEscrowClient {
     } catch (e) {
       return { ok: false, error: `Invalid signer address: ${String(e)}` };
     }
-    const expectedHint = signerKeypair.signatureHint().toString('hex');
+    const expectedHint = signerKeypair.signatureHint().toString("hex");
 
-    const matchingSig = signatures.find((sig) => sig.hint().toString('hex') === expectedHint);
+    const matchingSig = signatures.find(
+      (sig) => sig.hint().toString("hex") === expectedHint,
+    );
 
     if (!matchingSig) {
       return {
@@ -635,7 +728,9 @@ export class MultiSigEscrowClient {
       };
     }
 
-    const validHash = signedHashes.find((h) => signerKeypair.verify(h, matchingSig.signature()));
+    const validHash = signedHashes.find((h) =>
+      signerKeypair.verify(h, matchingSig.signature()),
+    );
     if (!validHash) {
       return {
         ok: false,
@@ -652,13 +747,16 @@ export class MultiSigEscrowClient {
    * current SDK builds; the raw XDR parse is the fallback for anything
    * `Transaction` rejects (e.g. legacy v0 envelopes).
    */
-  private _isValidEnvelope(envelopeXdr: string, networkPassphrase: string): boolean {
+  private _isValidEnvelope(
+    envelopeXdr: string,
+    networkPassphrase: string,
+  ): boolean {
     try {
       TransactionBuilder.fromXDR(envelopeXdr, networkPassphrase);
       return true;
     } catch {
       try {
-        xdr.TransactionEnvelope.fromXDR(envelopeXdr, 'base64');
+        xdr.TransactionEnvelope.fromXDR(envelopeXdr, "base64");
         return true;
       } catch {
         return false;
@@ -671,7 +769,9 @@ export class MultiSigEscrowClient {
    */
   private _getVerifiedCount(operation: MultiSigOperation): number {
     const verifiedSigners = new Set(
-      operation.collectedSignatures.filter((s) => s.verified).map((s) => s.signerAddress),
+      operation.collectedSignatures
+        .filter((s) => s.verified)
+        .map((s) => s.signerAddress),
     );
     return verifiedSigners.size;
   }
@@ -682,7 +782,7 @@ export class MultiSigEscrowClient {
    * Deduplicates by signature hint to prevent double-counting the same signer.
    */
   private _mergeSignatures(baseXdr: string, entries: SignatureEntry[]): string {
-    const baseEnvelope = xdr.TransactionEnvelope.fromXDR(baseXdr, 'base64');
+    const baseEnvelope = xdr.TransactionEnvelope.fromXDR(baseXdr, "base64");
 
     // Collect all unique decorated signatures from contributor envelopes
     const seen = new Set<string>();
@@ -691,7 +791,7 @@ export class MultiSigEscrowClient {
     // Preserve any signatures already on the base envelope
     const baseSignatures = this._extractSignatures(baseEnvelope);
     for (const sig of baseSignatures) {
-      const key = `${sig.hint().toString('hex')}:${sig.signature().toString('hex')}`;
+      const key = `${sig.hint().toString("hex")}:${sig.signature().toString("hex")}`;
       if (!seen.has(key)) {
         seen.add(key);
         merged.push(sig);
@@ -703,10 +803,13 @@ export class MultiSigEscrowClient {
       // Only merge signatures from verified entries
       if (!entry.verified) continue;
 
-      const envelope = xdr.TransactionEnvelope.fromXDR(entry.signedXdr, 'base64');
+      const envelope = xdr.TransactionEnvelope.fromXDR(
+        entry.signedXdr,
+        "base64",
+      );
       const sigs = this._extractSignatures(envelope);
       for (const sig of sigs) {
-        const key = `${sig.hint().toString('hex')}:${sig.signature().toString('hex')}`;
+        const key = `${sig.hint().toString("hex")}:${sig.signature().toString("hex")}`;
         if (!seen.has(key)) {
           seen.add(key);
           merged.push(sig);
@@ -716,11 +819,13 @@ export class MultiSigEscrowClient {
 
     // Write merged signatures back onto the base envelope
     this._setSignatures(baseEnvelope, merged);
-    return baseEnvelope.toXDR('base64');
+    return baseEnvelope.toXDR("base64");
   }
 
   /** Extracts `DecoratedSignature[]` from any TransactionEnvelope variant. */
-  private _extractSignatures(envelope: xdr.TransactionEnvelope): xdr.DecoratedSignature[] {
+  private _extractSignatures(
+    envelope: xdr.TransactionEnvelope,
+  ): xdr.DecoratedSignature[] {
     const type = envelope.switch();
     if (type === xdr.EnvelopeType.envelopeTypeTx()) {
       return envelope.v1().signatures();
@@ -733,7 +838,9 @@ export class MultiSigEscrowClient {
     }
     // Never fall through silently: a dropped signature here would let
     // addSignature's threshold check undercount a real signer.
-    throw TrustFlowError.multiSigXdrError(`Unsupported transaction envelope type: ${type.name}`);
+    throw TrustFlowError.multiSigXdrError(
+      `Unsupported transaction envelope type: ${type.name}`,
+    );
   }
 
   /** Replaces the signatures array on an envelope in-place. */
@@ -749,12 +856,16 @@ export class MultiSigEscrowClient {
     } else if (type === xdr.EnvelopeType.envelopeTypeTxV0()) {
       envelope.v0().signatures(signatures);
     } else {
-      throw TrustFlowError.multiSigXdrError(`Unsupported transaction envelope type: ${type.name}`);
+      throw TrustFlowError.multiSigXdrError(
+        `Unsupported transaction envelope type: ${type.name}`,
+      );
     }
   }
 
   private _isExpired(operation: MultiSigOperation): boolean {
-    return operation.expiresAt !== undefined && Date.now() > operation.expiresAt;
+    return (
+      operation.expiresAt !== undefined && Date.now() > operation.expiresAt
+    );
   }
 
   /**
@@ -762,15 +873,24 @@ export class MultiSigEscrowClient {
    * and records when it reached that state, so {@link prune} can evict it once
    * the retention window elapses.
    */
-  private _markTerminal(operation: MultiSigOperation, status: 'expired' | 'submitted'): void {
+  private _markTerminal(
+    operation: MultiSigOperation,
+    status: "expired" | "submitted",
+  ): void {
     operation.status = status;
     operation.terminalAt = Date.now();
   }
 
   private _buildStatus(operation: MultiSigOperation): MultiSigStatus {
-    const verifiedEntries = operation.collectedSignatures.filter((s) => s.verified);
-    const signersSigned = Array.from(new Set(verifiedEntries.map((s) => s.signerAddress)));
-    const signersRemaining = operation.signers.filter((s) => !signersSigned.includes(s));
+    const verifiedEntries = operation.collectedSignatures.filter(
+      (s) => s.verified,
+    );
+    const signersSigned = Array.from(
+      new Set(verifiedEntries.map((s) => s.signerAddress)),
+    );
+    const signersRemaining = operation.signers.filter(
+      (s) => !signersSigned.includes(s),
+    );
     const verifiedCount = signersSigned.length;
 
     return {
@@ -782,7 +902,8 @@ export class MultiSigEscrowClient {
       signersAuthorised: [...operation.signers],
       signersSigned,
       signersRemaining,
-      isReady: verifiedCount >= operation.threshold,
+      isReady:
+        verifiedCount >= operation.threshold && operation.status !== "expired",
       status: operation.status,
       createdAt: operation.createdAt,
       expiresAt: operation.expiresAt,

@@ -122,4 +122,39 @@ describe('MultiSigEscrowClient automatic eviction', () => {
     client.prune();
     expect((client as any).operations.size).toBe(0);
   });
+
+  it('transitions a ready operation past expiresAt to expired in getMultiSigStatus (#642)', () => {
+    const client = makeClient(1000);
+    const expiresAt = Date.now() + 1000;
+    const init = client.initMultiSigOperation({
+      escrowId: 'escrow-1',
+      signers: [SIGNER.publicKey()],
+      threshold: 1,
+      operationType: 'release',
+      unsignedXdr: XDR,
+      networkPassphrase: NETWORK,
+      expiresAt,
+    });
+    expect(init.ok).toBe(true);
+    if (!init.ok) return;
+
+    const signedTx = TransactionBuilder.fromXDR(XDR, NETWORK);
+    signedTx.sign(SIGNER);
+    const added = client.addSignature({
+      operationId: init.data.operationId,
+      signerAddress: SIGNER.publicKey(),
+      signedXdr: signedTx.toEnvelope().toXDR('base64'),
+    });
+    expect(added.ok).toBe(true);
+    if (!added.ok) return;
+    expect(added.data.status).toBe('ready');
+    expect(added.data.isReady).toBe(true);
+
+    jest.setSystemTime(expiresAt + 1);
+    const status = client.getMultiSigStatus(init.data.operationId);
+    expect(status.ok).toBe(true);
+    if (!status.ok) return;
+    expect(status.data.status).toBe('expired');
+    expect(status.data.isReady).toBe(false);
+  });
 });
