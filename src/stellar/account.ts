@@ -1,8 +1,9 @@
-import { TrustFlowError } from '../errors';
-import { withTransientRetry } from '../utils/node-retry';
-import type { ApiRetryConfig } from '../utils/http';
-import { fetchWithTimeout } from '../utils/timeout';
-import { getNetworkConfig, StellarNetwork } from './network';
+import { TrustFlowError } from "../errors";
+import { withTransientRetry } from "../utils/node-retry";
+import type { ApiRetryConfig } from "../utils/http";
+import { fetchWithTimeout } from "../utils/timeout";
+import { assertStellarAddress } from "../utils/validation";
+import { getNetworkConfig, StellarNetwork } from "./network";
 
 export interface AccountInfo {
   address: string;
@@ -21,7 +22,7 @@ interface HorizonAccountResponse {
 
 /** An account that Horizon positively reports as existing. */
 function unfundedAccount(address: string): AccountInfo {
-  return { address, balanceXLM: '0', sequenceNumber: '0', isActive: false };
+  return { address, balanceXLM: "0", sequenceNumber: "0", isActive: false };
 }
 
 /**
@@ -59,9 +60,9 @@ function unfundedAccount(address: string): AccountInfo {
  * @param horizonUrl - Optional Horizon base URL override
  * @param timeoutMs - Optional request timeout in milliseconds
  * @returns The account's balance, sequence number and activation state
- * @throws {TrustFlowError} `NOT_FOUND` for a non-`404` client error,
- *   `CONNECTION_ERROR` when Horizon stays unreachable, or `TIMEOUT` when the
- *   deadline fires
+ * @throws {TrustFlowError} `VALIDATION_ERROR` for an invalid Stellar address,
+ *   `NOT_FOUND` for a non-`404` client error, `CONNECTION_ERROR` when Horizon
+ *   stays unreachable, or `TIMEOUT` when the deadline fires
  *
  * @example
  * ```typescript
@@ -76,17 +77,19 @@ export async function fetchAccountInfo(
   horizonUrl?: string,
   timeoutMs?: number,
 ): Promise<AccountInfo> {
-  const effectiveHorizonUrl = horizonUrl ?? getNetworkConfig(network).horizonUrl;
+  assertStellarAddress(address, "address");
+  const effectiveHorizonUrl =
+    horizonUrl ?? getNetworkConfig(network).horizonUrl;
 
   let response: Response | null;
   try {
     response = await withTransientRetry(
       async () => {
         const res = await fetchWithTimeout(
-          `${effectiveHorizonUrl}/accounts/${address}`,
+          `${effectiveHorizonUrl}/accounts/${encodeURIComponent(address)}`,
           undefined,
           timeoutMs,
-          'horizon.fetchAccountInfo',
+          "horizon.fetchAccountInfo",
         );
         if (res.ok) return res;
 
@@ -98,22 +101,22 @@ export async function fetchAccountInfo(
         }
         throw new TrustFlowError(
           `Horizon rejected the account lookup for ${address} (HTTP ${res.status})`,
-          res.status >= 500 ? 'CONNECTION_ERROR' : 'NOT_FOUND',
+          res.status >= 500 ? "CONNECTION_ERROR" : "NOT_FOUND",
           {
             status: res.status,
-            'retry-after': res.headers.get('retry-after'),
+            "retry-after": res.headers.get("retry-after"),
           },
         );
       },
       undefined,
       retry,
-      'horizon.fetchAccountInfo',
+      "horizon.fetchAccountInfo",
     );
   } catch (e) {
     // A transport failure reaches here only once the retry budget is spent.
     // Surface it as a typed SDK error so callers never have to distinguish a
     // raw `TypeError: fetch failed` from a real "account not found".
-    throw TrustFlowError.wrap(e, 'CONNECTION_ERROR');
+    throw TrustFlowError.wrap(e, "CONNECTION_ERROR");
   }
 
   if (response === null) {
@@ -122,17 +125,17 @@ export async function fetchAccountInfo(
 
   try {
     const data = (await response.json()) as HorizonAccountResponse;
-    const xlm = data.balances?.find((b) => b.asset_type === 'native');
+    const xlm = data.balances?.find((b) => b.asset_type === "native");
     return {
       address,
-      balanceXLM: xlm?.balance ?? '0',
+      balanceXLM: xlm?.balance ?? "0",
       sequenceNumber: data.sequence,
       isActive: true,
     };
   } catch (e) {
     throw new TrustFlowError(
       `Horizon returned an unparseable account payload for ${address}`,
-      'CONNECTION_ERROR',
+      "CONNECTION_ERROR",
       e,
     );
   }

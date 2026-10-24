@@ -126,6 +126,22 @@ describe('fetchAccountInfo', () => {
       code: 'CONNECTION_ERROR',
     });
   });
+
+  it('validates the address and rejects malformed or path-traversal inputs before calling fetch (#616)', async () => {
+    await expect(fetchAccountInfo('../ledgers?order=desc', 'TESTNET', FAST)).rejects.toMatchObject({
+      code: 'VALIDATION_ERROR',
+      field: 'address',
+    });
+    await expect(fetchAccountInfo('', 'TESTNET', FAST)).rejects.toMatchObject({
+      code: 'VALIDATION_ERROR',
+      field: 'address',
+    });
+    await expect(fetchAccountInfo('not-a-stellar-key', 'TESTNET', FAST)).rejects.toMatchObject({
+      code: 'VALIDATION_ERROR',
+      field: 'address',
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
 });
 
 describe('TrustFlowClient.getBalance retry behaviour', () => {
