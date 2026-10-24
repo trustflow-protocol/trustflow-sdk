@@ -245,4 +245,49 @@ describe('IPFSStorage encryption', () => {
       TrustFlowError,
     );
   });
+
+  it('round-trips encryption in an ESM-like environment where CJS require is unavailable (#639)', () => {
+    const ts = require('typescript') as typeof import('typescript');
+    const fs = require('fs') as typeof import('fs');
+    const path = require('path') as typeof import('path');
+    const vm = require('vm') as typeof import('vm');
+
+    const ipfsSource = fs.readFileSync(path.resolve(__dirname, '../src/storage/ipfs.ts'), 'utf8');
+    const transpiled = ts.transpileModule(ipfsSource, {
+      compilerOptions: {
+        module: ts.ModuleKind.CommonJS,
+        target: ts.ScriptTarget.ES2022,
+        esModuleInterop: true,
+      },
+    }).outputText;
+
+    // Replace the `typeof require !== 'undefined'` check inside requireNodeCrypto
+    // so the module executes as if bundled into an ES module where `require` is undefined.
+    const esmSimulatedCode = transpiled.replace(
+      /typeof require !== ['"]undefined['"] \? require : undefined/g,
+      'undefined',
+    );
+
+    const moduleExports: Record<string, unknown> = {};
+    const cjsRequire = (id: string) => {
+      if (id === 'crypto') {
+        throw new Error('CJS require("crypto") must not be called in ESM mode');
+      }
+      if (id.startsWith('.')) {
+        return require(path.resolve(__dirname, '../src/storage', id));
+      }
+      return require(id);
+    };
+
+    const wrapper = vm.runInThisContext(
+      `(function(exports, require, module) { ${esmSimulatedCode}\n})`,
+    );
+    wrapper(moduleExports, cjsRequire, { exports: moduleExports });
+
+    const EsmIPFSStorage = moduleExports.IPFSStorage as typeof IPFSStorage;
+    const storage = new EsmIPFSStorage();
+    const key = Buffer.alloc(32, 7);
+    const encrypted = storage.encrypt('esm secret payload', key);
+    expect(storage.decrypt(encrypted, key).toString('utf8')).toBe('esm secret payload');
+  });
 });

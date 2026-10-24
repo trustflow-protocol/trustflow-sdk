@@ -1,22 +1,15 @@
-import axios from 'axios';
-import type { AxiosInstance } from 'axios';
-import { isValidCid } from './cid';
-import { logger } from '../utils/logger';
-import type { SDKResult } from '../types/index';
-import { createApiHttpClient, toApiErrorMessage } from '../utils/http';
-import type { ApiRetryConfig } from '../utils/http';
-import type { HttpInterceptors } from '../utils/interceptors';
-import { TrustFlowError } from '../errors';
-import { randomBytes } from '../utils/crypto';
+import axios from "axios";
+import type { AxiosInstance } from "axios";
+import { isValidCid } from "./cid";
+import { logger } from "../utils/logger";
+import type { SDKResult } from "../types/index";
+import { createApiHttpClient, toApiErrorMessage } from "../utils/http";
+import type { ApiRetryConfig } from "../utils/http";
+import type { HttpInterceptors } from "../utils/interceptors";
+import { TrustFlowError } from "../errors";
+import { randomBytes } from "../utils/crypto";
 
-/**
- * Lazily resolves Node's `crypto` module so browser bundles never see a
- * static `import ... from 'crypto'` (which forces Webpack 5 users into
- * polyfills — enforced by tests/bundler-compat.test.ts). Only the pieces
- * this module needs are typed, structurally, to avoid importing any
- * `crypto` types (type-only imports are still static imports to bundlers).
- */
-function requireNodeCrypto(): {
+type NodeCryptoModule = {
   createCipheriv(
     alg: string,
     key: Uint8Array,
@@ -35,34 +28,79 @@ function requireNodeCrypto(): {
     final(): Buffer;
     setAuthTag(tag: Uint8Array): void;
   };
-} {
-  const modName = 'crypto';
-  const req = typeof require !== 'undefined' ? require : undefined;
-  const nodeCrypto = req ? req(modName) : undefined;
+};
+
+let asyncLoadedNodeCrypto: NodeCryptoModule | undefined;
+
+if (
+  typeof process !== "undefined" &&
+  (process as unknown as { versions?: { node?: string } }).versions?.node &&
+  typeof (process as unknown as { getBuiltinModule?: unknown })
+    .getBuiltinModule !== "function" &&
+  typeof require === "undefined"
+) {
+  try {
+    const dynamicImport = new Function("m", "return import(m)") as (
+      m: string,
+    ) => Promise<NodeCryptoModule>;
+    void dynamicImport("crypto")
+      .then((mod) => {
+        if (mod?.createCipheriv) asyncLoadedNodeCrypto = mod;
+      })
+      .catch(() => {});
+  } catch {
+    // Ignore in environments where dynamic import is unavailable.
+  }
+}
+
+/**
+ * Lazily resolves Node's `crypto` module in both CommonJS and ES module builds
+ * so browser bundles never see a static `import ... from 'crypto'` (which
+ * forces Webpack 5 users into polyfills — enforced by tests/bundler-compat.test.ts).
+ * Only the pieces this module needs are typed, structurally, to avoid importing
+ * any `crypto` types (type-only imports are still static imports to bundlers).
+ */
+function requireNodeCrypto(): NodeCryptoModule {
+  const modName = "crypto";
+  const proc =
+    typeof process !== "undefined"
+      ? (process as unknown as { getBuiltinModule?: (id: string) => unknown })
+      : undefined;
+  const builtinCrypto =
+    typeof proc?.getBuiltinModule === "function"
+      ? (proc.getBuiltinModule(modName) as NodeCryptoModule | undefined)
+      : undefined;
+  const req = typeof require !== "undefined" ? require : undefined;
+  const nodeCrypto =
+    builtinCrypto ??
+    (req ? (req(modName) as NodeCryptoModule) : undefined) ??
+    asyncLoadedNodeCrypto;
   if (!nodeCrypto) {
     throw new TrustFlowError(
-      'AES-256-GCM encryption/decryption requires the Node.js crypto module, which is not available in this environment',
-      'UNSUPPORTED_ENVIRONMENT',
+      "AES-256-GCM encryption/decryption requires the Node.js crypto module, which is not available in this environment",
+      "UNSUPPORTED_ENVIRONMENT",
     );
   }
   return nodeCrypto;
 }
 
 /** Default upload endpoint — a raw-body IPFS upload API (e.g. web3.storage-compatible). */
-const DEFAULT_IPFS_API_URL = 'https://api.web3.storage/upload';
+const DEFAULT_IPFS_API_URL = "https://api.web3.storage/upload";
 /** Default read gateway used to build a browsable URL from a returned CID. */
-const DEFAULT_IPFS_GATEWAY = 'https://w3s.link/ipfs';
+const DEFAULT_IPFS_GATEWAY = "https://w3s.link/ipfs";
 /** Secondary default IPFS gateways for automatic resolution fallback. */
 const DEFAULT_FALLBACK_GATEWAYS = [
-  'https://ipfs.io/ipfs',
-  'https://cloudflare-ipfs.com/ipfs',
-  'https://dweb.link/ipfs',
+  "https://ipfs.io/ipfs",
+  "https://cloudflare-ipfs.com/ipfs",
+  "https://dweb.link/ipfs",
 ];
 
 /** Build consistent path-style gateway URLs for both uploads and reads. */
 function gatewayCidUrl(gateway: string, cid: string): string {
-  const cleanGateway = gateway.replace(/\/+$/, '');
-  const baseUrl = cleanGateway.includes('/ipfs') ? cleanGateway : `${cleanGateway}/ipfs`;
+  const cleanGateway = gateway.replace(/\/+$/, "");
+  const baseUrl = cleanGateway.includes("/ipfs")
+    ? cleanGateway
+    : `${cleanGateway}/ipfs`;
   return `${baseUrl}/${cid}`;
 }
 
@@ -137,7 +175,10 @@ export class IPFSStorage {
       this.gateways = [...config.gateways];
     } else {
       const secondaries = config.fallbackGateways ?? DEFAULT_FALLBACK_GATEWAYS;
-      this.gateways = [this.gatewayUrl, ...secondaries.filter((g) => g !== this.gatewayUrl)];
+      this.gateways = [
+        this.gatewayUrl,
+        ...secondaries.filter((g) => g !== this.gatewayUrl),
+      ];
     }
 
     this.http = createApiHttpClient({
@@ -156,44 +197,54 @@ export class IPFSStorage {
     file: Buffer | Uint8Array | ArrayBuffer | Blob,
     options: IPFSUploadOptions = {},
   ): Promise<SDKResult<IPFSUploadResult>> {
-    const isBlob = typeof Blob !== 'undefined' && file instanceof Blob;
+    const isBlob = typeof Blob !== "undefined" && file instanceof Blob;
     const size = isBlob
       ? (file as Blob).size
       : (file as Buffer | Uint8Array | ArrayBuffer)?.byteLength;
     if (!file || !size) {
       return {
         ok: false,
-        error: 'file must be a non-empty Buffer, Uint8Array, ArrayBuffer, Blob or File',
+        error:
+          "file must be a non-empty Buffer, Uint8Array, ArrayBuffer, Blob or File",
       };
     }
 
-    const filename = options.filename ?? (isBlob ? (file as File).name : undefined);
+    const filename =
+      options.filename ?? (isBlob ? (file as File).name : undefined);
     const contentType =
-      options.contentType || (isBlob ? (file as Blob).type : '') || 'application/octet-stream';
+      options.contentType ||
+      (isBlob ? (file as Blob).type : "") ||
+      "application/octet-stream";
 
-    logger.debug('Uploading file to IPFS', { size, filename, contentType });
+    logger.debug("Uploading file to IPFS", { size, filename, contentType });
     try {
       const body = isBlob
         ? new Uint8Array(await (file as Blob).arrayBuffer())
         : file instanceof ArrayBuffer
           ? new Uint8Array(file)
           : file;
-      const response = await this.http.post<{ cid?: string }>('', body, {
+      const response = await this.http.post<{ cid?: string }>("", body, {
         headers: {
-          'Content-Type': contentType,
-          ...(filename ? { 'X-Name': filename } : {}),
+          "Content-Type": contentType,
+          ...(filename ? { "X-Name": filename } : {}),
         },
         signal: options.abortSignal,
       });
       const cid = response.data?.cid;
-      if (!cid || typeof cid !== 'string' || cid.trim() === '') {
-        logger.warn('IPFS upload returned invalid or missing CID', { cid });
-        return { ok: false, error: 'Upload succeeded but response did not include a valid CID' };
+      if (!cid || typeof cid !== "string" || cid.trim() === "") {
+        logger.warn("IPFS upload returned invalid or missing CID", { cid });
+        return {
+          ok: false,
+          error: "Upload succeeded but response did not include a valid CID",
+        };
       }
-      logger.info('IPFS upload succeeded', { cid });
-      return { ok: true, data: { cid, url: gatewayCidUrl(this.gatewayUrl, cid) } };
+      logger.info("IPFS upload succeeded", { cid });
+      return {
+        ok: true,
+        data: { cid, url: gatewayCidUrl(this.gatewayUrl, cid) },
+      };
     } catch (err) {
-      logger.error('IPFS upload failed', { error: toApiErrorMessage(err) });
+      logger.error("IPFS upload failed", { error: toApiErrorMessage(err) });
       return { ok: false, error: toApiErrorMessage(err) };
     }
   }
@@ -209,9 +260,12 @@ export class IPFSStorage {
    * @returns Parsed JSON content as type T
    * @throws {TrustFlowError} `STORAGE_GATEWAY_ERROR` when all gateways fail, or `VALIDATION_ERROR` for invalid CID.
    */
-  async resolve<T = unknown>(cid: string, options: IPFSResolveOptions = {}): Promise<T> {
-    if (!cid || typeof cid !== 'string' || !isValidCid(cid)) {
-      throw TrustFlowError.validation('cid', `Invalid CID: "${cid}"`);
+  async resolve<T = unknown>(
+    cid: string,
+    options: IPFSResolveOptions = {},
+  ): Promise<T> {
+    if (!cid || typeof cid !== "string" || !isValidCid(cid)) {
+      throw TrustFlowError.validation("cid", `Invalid CID: "${cid}"`);
     }
 
     const errors: string[] = [];
@@ -219,23 +273,28 @@ export class IPFSStorage {
     const abortSignal = options.abortSignal;
 
     for (const gateway of this.gateways) {
-      const cleanGateway = gateway.replace(/\/+$/, '');
+      const cleanGateway = gateway.replace(/\/+$/, "");
       const url = gatewayCidUrl(gateway, cid);
       try {
-        logger.debug('Resolving IPFS CID from gateway', { gateway: cleanGateway, cid });
+        logger.debug("Resolving IPFS CID from gateway", {
+          gateway: cleanGateway,
+          cid,
+        });
         const response = await axios.get(url, {
           timeout,
           signal: abortSignal,
-          responseType: 'text',
+          responseType: "text",
           transformResponse: [(d) => d],
           validateStatus: (status) => status >= 200 && status < 300,
         });
 
-        const contentType = String(response.headers?.['content-type'] ?? '').toLowerCase();
+        const contentType = String(
+          response.headers?.["content-type"] ?? "",
+        ).toLowerCase();
         const rawBody = response.data;
 
         // Verify content-type is not HTML
-        if (contentType.includes('text/html')) {
+        if (contentType.includes("text/html")) {
           const err = `Gateway ${cleanGateway} returned HTML instead of JSON`;
           logger.warn(err, { cid });
           errors.push(err);
@@ -246,7 +305,7 @@ export class IPFSStorage {
         if (
           rawBody === undefined ||
           rawBody === null ||
-          (typeof rawBody === 'string' && rawBody.trim().length === 0)
+          (typeof rawBody === "string" && rawBody.trim().length === 0)
         ) {
           const err = `Gateway ${cleanGateway} returned an empty body`;
           logger.warn(err, { cid });
@@ -256,14 +315,18 @@ export class IPFSStorage {
 
         // Parse JSON
         try {
-          const parsed = typeof rawBody === 'string' ? JSON.parse(rawBody) : rawBody;
+          const parsed =
+            typeof rawBody === "string" ? JSON.parse(rawBody) : rawBody;
           if (parsed === undefined || parsed === null) {
             const err = `Gateway ${cleanGateway} parsed JSON returned null/undefined`;
             logger.warn(err, { cid });
             errors.push(err);
             continue;
           }
-          logger.info('Resolved IPFS content successfully', { gateway: cleanGateway, cid });
+          logger.info("Resolved IPFS content successfully", {
+            gateway: cleanGateway,
+            cid,
+          });
           return parsed as T;
         } catch (parseError: any) {
           const err = `Gateway ${cleanGateway} returned invalid JSON: ${parseError.message}`;
@@ -274,7 +337,8 @@ export class IPFSStorage {
       } catch (reqError: any) {
         // Re-throw abort errors immediately so callers can distinguish cancellation from failure
         if (abortSignal?.aborted) {
-          const abortError = reqError instanceof Error ? reqError : new Error(String(reqError));
+          const abortError =
+            reqError instanceof Error ? reqError : new Error(String(reqError));
           throw abortError;
         }
         const err = `Gateway ${cleanGateway} request failed: ${reqError?.message || String(reqError)}`;
@@ -284,10 +348,10 @@ export class IPFSStorage {
       }
     }
 
-    logger.error('All IPFS gateways failed to resolve CID', { cid, errors });
+    logger.error("All IPFS gateways failed to resolve CID", { cid, errors });
     throw new TrustFlowError(
-      `Failed to resolve IPFS CID "${cid}" from gateways. Errors: ${errors.join('; ')}`,
-      'STORAGE_GATEWAY_ERROR',
+      `Failed to resolve IPFS CID "${cid}" from gateways. Errors: ${errors.join("; ")}`,
+      "STORAGE_GATEWAY_ERROR",
     );
   }
 
@@ -299,28 +363,36 @@ export class IPFSStorage {
    * @returns Object containing IV, encrypted data, and authentication tag, all base64-encoded
    * @throws {TrustFlowError} if encryption fails
    */
-  encrypt(plaintext: Buffer | string | Uint8Array, key: Buffer | Uint8Array): EncryptedData {
+  encrypt(
+    plaintext: Buffer | string | Uint8Array,
+    key: Buffer | Uint8Array,
+  ): EncryptedData {
     if (key.length !== 32) {
-      throw TrustFlowError.validation('key', 'Encryption key must be exactly 32 bytes (256 bits)');
+      throw TrustFlowError.validation(
+        "key",
+        "Encryption key must be exactly 32 bytes (256 bits)",
+      );
     }
     try {
       const { createCipheriv } = requireNodeCrypto();
       const iv = randomBytes(12);
       const data =
-        typeof plaintext === 'string' ? Buffer.from(plaintext, 'utf8') : Buffer.from(plaintext);
-      const cipher = createCipheriv('aes-256-gcm', key, iv);
+        typeof plaintext === "string"
+          ? Buffer.from(plaintext, "utf8")
+          : Buffer.from(plaintext);
+      const cipher = createCipheriv("aes-256-gcm", key, iv);
       const encrypted = Buffer.concat([cipher.update(data), cipher.final()]);
       const tag = cipher.getAuthTag();
 
       return {
         // Buffer.from: the shared randomBytes helper returns a plain
         // Uint8Array, whose toString() takes no encoding argument.
-        iv: Buffer.from(iv).toString('base64'),
-        data: encrypted.toString('base64'),
-        tag: tag.toString('base64'),
+        iv: Buffer.from(iv).toString("base64"),
+        data: encrypted.toString("base64"),
+        tag: tag.toString("base64"),
       };
     } catch (e) {
-      throw TrustFlowError.wrap(e, 'ENCRYPTION_ERROR');
+      throw TrustFlowError.wrap(e, "ENCRYPTION_ERROR");
     }
   }
 
@@ -334,19 +406,22 @@ export class IPFSStorage {
    */
   decrypt(encrypted: EncryptedData, key: Buffer | Uint8Array): Buffer {
     if (key.length !== 32) {
-      throw TrustFlowError.validation('key', 'Decryption key must be exactly 32 bytes (256 bits)');
+      throw TrustFlowError.validation(
+        "key",
+        "Decryption key must be exactly 32 bytes (256 bits)",
+      );
     }
     try {
       const { createDecipheriv } = requireNodeCrypto();
-      const iv = Buffer.from(encrypted.iv, 'base64');
-      const data = Buffer.from(encrypted.data, 'base64');
-      const tag = Buffer.from(encrypted.tag, 'base64');
+      const iv = Buffer.from(encrypted.iv, "base64");
+      const data = Buffer.from(encrypted.data, "base64");
+      const tag = Buffer.from(encrypted.tag, "base64");
 
-      const decipher = createDecipheriv('aes-256-gcm', key, iv);
+      const decipher = createDecipheriv("aes-256-gcm", key, iv);
       decipher.setAuthTag(tag);
       return Buffer.concat([decipher.update(data), decipher.final()]);
     } catch (e) {
-      throw TrustFlowError.wrap(e, 'DECRYPTION_ERROR');
+      throw TrustFlowError.wrap(e, "DECRYPTION_ERROR");
     }
   }
 }
