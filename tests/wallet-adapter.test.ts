@@ -47,6 +47,43 @@ describe('createFreighterAdapter (#435)', () => {
     expect(signTransaction).toHaveBeenCalledWith('xdr', { network: 'TESTNET' });
     await expect(adapter.signMessage('hello')).resolves.toBe('sig');
   });
+
+  it('wraps user rejections and wallet errors from sign and signMessage as TrustFlowError (#601)', async () => {
+    const rejection = new Error('User declined access');
+    installFreighter({
+      getPublicKey: jest.fn().mockResolvedValue(PUBLIC_KEY),
+      getNetwork: jest.fn().mockResolvedValue('TESTNET'),
+      signTransaction: jest.fn().mockRejectedValue(rejection),
+      signMessage: jest.fn().mockRejectedValue({ code: 4001, message: 'User rejected request' }),
+    });
+    const adapter = createFreighterAdapter();
+
+    const signErr = await adapter.sign('xdr', 'TESTNET').catch((e) => e);
+    expect(signErr).toBeInstanceOf(TrustFlowError);
+    expect(signErr.code).toBe('USER_REJECTED');
+    expect(signErr.cause).toBe(rejection);
+
+    const msgErr = await adapter.signMessage('hello').catch((e) => e);
+    expect(msgErr).toBeInstanceOf(TrustFlowError);
+    expect(msgErr.code).toBe('USER_REJECTED');
+
+    const genericErr = new Error('Extension crashed');
+    installFreighter({
+      getPublicKey: jest.fn().mockResolvedValue(PUBLIC_KEY),
+      getNetwork: jest.fn().mockResolvedValue('TESTNET'),
+      signTransaction: jest.fn().mockRejectedValue(genericErr),
+      signMessage: jest.fn().mockRejectedValue('raw failure'),
+    });
+
+    const signGeneric = await adapter.sign('xdr', 'TESTNET').catch((e) => e);
+    expect(signGeneric).toBeInstanceOf(TrustFlowError);
+    expect(signGeneric.code).toBe('SIGNING_ERROR');
+    expect(signGeneric.cause).toBe(genericErr);
+
+    const msgGeneric = await adapter.signMessage('hello').catch((e) => e);
+    expect(msgGeneric).toBeInstanceOf(TrustFlowError);
+    expect(msgGeneric.code).toBe('SIGNING_ERROR');
+  });
 });
 
 describe('MockWalletAdapter.asWalletAdapter (#435)', () => {
