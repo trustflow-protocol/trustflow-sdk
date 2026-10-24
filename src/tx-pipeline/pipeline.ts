@@ -6,15 +6,18 @@ import {
   TransactionBuilder,
   rpc,
   xdr,
-} from '@stellar/stellar-sdk';
-import type { TrustFlowClient } from '../client';
-import type { AccountContext } from '../accounts/types';
-import { TrustFlowError } from '../errors';
-import { retry } from '../utils/retry';
-import { DEFAULT_RESOURCE_FEE_MULTIPLIER, padResourceFee } from '../utils/resource-fee';
-import { classifyFailure, markTransient } from '../utils/transient';
-import { withTimeout } from '../utils/timeout';
-import { queueDepth, queueKey, runExclusive } from './queue';
+} from "@stellar/stellar-sdk";
+import type { TrustFlowClient } from "../client";
+import type { AccountContext } from "../accounts/types";
+import { TrustFlowError } from "../errors";
+import { retry } from "../utils/retry";
+import {
+  DEFAULT_RESOURCE_FEE_MULTIPLIER,
+  padResourceFee,
+} from "../utils/resource-fee";
+import { classifyFailure, markTransient } from "../utils/transient";
+import { withTimeout } from "../utils/timeout";
+import { queueDepth, queueKey, runExclusive } from "./queue";
 import type {
   AssembleParams,
   EstimateFeeOptions,
@@ -29,10 +32,10 @@ import type {
   RunPipelineParams,
   SubmitOptions,
   SubmittableTransaction,
-} from './types';
-import { logger } from '../utils/logger';
+} from "./types";
+import { logger } from "../utils/logger";
 
-const DEFAULT_RETRY_POLICY: Required<Omit<RetryPolicy, 'timeoutMs'>> = {
+const DEFAULT_RETRY_POLICY: Required<Omit<RetryPolicy, "timeoutMs">> = {
   maxAttempts: 3,
   baseDelayMs: 300,
   maxDelayMs: 5000,
@@ -49,7 +52,8 @@ function fail<T>(error: TrustFlowError): PipelineResult<T> {
   return { ok: false, error };
 }
 
-const FEE_RELATED_PATTERN = /TRY_AGAIN_LATER|insufficient.?fee|tx_insufficient_fee/i;
+const FEE_RELATED_PATTERN =
+  /TRY_AGAIN_LATER|insufficient.?fee|tx_insufficient_fee/i;
 
 /**
  * Fee-related failures are the only ones worth escalating to a fee-bump
@@ -58,7 +62,7 @@ const FEE_RELATED_PATTERN = /TRY_AGAIN_LATER|insufficient.?fee|tx_insufficient_f
  * wrapped `cause`, not the outer message.
  */
 function isFeeRelated(error: TrustFlowError): boolean {
-  const cause = error.cause instanceof Error ? error.cause.message : '';
+  const cause = error.cause instanceof Error ? error.cause.message : "";
   return FEE_RELATED_PATTERN.test(`${error.message} ${cause}`);
 }
 
@@ -66,14 +70,15 @@ function isFeeRelated(error: TrustFlowError): boolean {
 function isConfirmationPollTimeout(error: unknown): boolean {
   if (error instanceof TrustFlowError) {
     if (
-      (error.code === 'TIMEOUT' && error.message.includes('confirmation polling')) ||
-      error.message.includes('timed out waiting for transaction')
+      (error.code === "TIMEOUT" &&
+        error.message.includes("confirmation polling")) ||
+      error.message.includes("timed out waiting for transaction")
     ) {
       return true;
     }
     return isConfirmationPollTimeout(error.cause);
   }
-  if (error instanceof Error && 'cause' in error) {
+  if (error instanceof Error && "cause" in error) {
     return isConfirmationPollTimeout(error.cause);
   }
   return false;
@@ -88,7 +93,7 @@ async function sleep(ms: number): Promise<void> {
  * not hand the outer stage a doubly-wrapped failure.
  */
 function unwrapStageError(error: TrustFlowError): unknown {
-  if (error.code === 'RETRY_EXHAUSTED' && error.cause !== undefined) {
+  if (error.code === "RETRY_EXHAUSTED" && error.cause !== undefined) {
     return error.cause;
   }
   return error;
@@ -123,17 +128,23 @@ async function withRetry<T>(
   stage: string,
   defaultTimeoutMs?: number,
 ): Promise<PipelineResult<T>> {
-  const { maxAttempts, baseDelayMs, maxDelayMs } = { ...DEFAULT_RETRY_POLICY, ...policy };
+  const { maxAttempts, baseDelayMs, maxDelayMs } = {
+    ...DEFAULT_RETRY_POLICY,
+    ...policy,
+  };
   // Per-stage override, else the client-wide timeout every RPC call inherits.
   const timeoutMs = policy?.timeoutMs ?? defaultTimeoutMs;
-  const isTransient = (error: unknown): boolean => classifyFailure(error).transient;
+  const isTransient = (error: unknown): boolean =>
+    classifyFailure(error).transient;
 
   try {
     const data = await retry(
-      async (attempt: number) => withTimeout(fn(attempt), timeoutMs, `pipeline.${stage}`),
+      async (attempt: number) =>
+        withTimeout(fn(attempt), timeoutMs, `pipeline.${stage}`),
       {
         attempts: maxAttempts,
-        delayMs: (attempt) => Math.min(baseDelayMs * 2 ** (attempt - 1), maxDelayMs),
+        delayMs: (attempt) =>
+          Math.min(baseDelayMs * 2 ** (attempt - 1), maxDelayMs),
         shouldRetry: isTransient,
         // Equal jitter: the delay lands in `[delay / 2, delay]`, which keeps the
         // "second delay is capped by maxDelayMs" guarantee intact while
@@ -141,7 +152,7 @@ async function withRetry<T>(
         jitter: true,
       },
     );
-    logger.debug('Pipeline stage succeeded', { stage, attempts: maxAttempts });
+    logger.debug("Pipeline stage succeeded", { stage, attempts: maxAttempts });
     return ok(data);
   } catch (e) {
     if (!isTransient(e)) {
@@ -152,7 +163,7 @@ async function withRetry<T>(
     // A timeout is its own diagnosis — once the retry budget is spent, show
     // the `TIMEOUT` code itself rather than a generic retry-exhausted
     // wrapper, so callers can branch on "it stalled" without unwrapping.
-    if (e instanceof TrustFlowError && e.code === 'TIMEOUT') {
+    if (e instanceof TrustFlowError && e.code === "TIMEOUT") {
       return fail(e);
     }
     return fail(TrustFlowError.retryExhausted(stage, maxAttempts, e));
@@ -273,7 +284,7 @@ export class TransactionPipeline {
       const loaded = await withRetry(
         () => this.server.getAccount(params.sourceAccount),
         options,
-        'assemble',
+        "assemble",
         this.client.timeoutMs,
       );
       if (!loaded.ok) {
@@ -297,10 +308,12 @@ export class TransactionPipeline {
         builder.addMemo(params.memo);
       }
 
-      this.pipelineLogger.debug('Transaction assembled', { sourceAccount: params.sourceAccount });
+      this.pipelineLogger.debug("Transaction assembled", {
+        sourceAccount: params.sourceAccount,
+      });
       return ok(builder.build());
     } catch (e) {
-      this.pipelineLogger.error('Transaction assembly failed', {
+      this.pipelineLogger.error("Transaction assembly failed", {
         sourceAccount: params.sourceAccount,
         error: e,
       });
@@ -331,14 +344,14 @@ export class TransactionPipeline {
     const outcome = await withRetry(
       () => this.server.simulateTransaction(tx),
       options,
-      'simulate',
+      "simulate",
       this.client.timeoutMs,
     );
     if (!outcome.ok) {
-      if (outcome.error.code === 'RETRY_EXHAUSTED') {
+      if (outcome.error.code === "RETRY_EXHAUSTED") {
         return fail(
           TrustFlowError.simulationFailed(
-            'simulateTransaction request failed',
+            "simulateTransaction request failed",
             outcome.error.cause,
           ),
         );
@@ -373,7 +386,10 @@ export class TransactionPipeline {
       return fail(TrustFlowError.simulationFailed(simData.error));
     }
 
-    const resourceFee = padResourceFee(simData.minResourceFee, options?.resourceFeeMultiplier);
+    const resourceFee = padResourceFee(
+      simData.minResourceFee,
+      options?.resourceFeeMultiplier,
+    );
 
     let minInclusionFee = BigInt(tx.fee || BASE_FEE);
     if (minInclusionFee <= 0n) {
@@ -386,7 +402,10 @@ export class TransactionPipeline {
     const tolBps = BigInt(Math.round(tolerance * 10000));
     const inclusionFee: FeeRange = {
       min: ((minInclusionFee * tolBps + 9999n) / 10000n).toString(),
-      recommended: ((recommendedInclusionFee * tolBps + 9999n) / 10000n).toString(),
+      recommended: (
+        (recommendedInclusionFee * tolBps + 9999n) /
+        10000n
+      ).toString(),
       max: ((maxInclusionFee * tolBps + 9999n) / 10000n).toString(),
     };
 
@@ -397,8 +416,12 @@ export class TransactionPipeline {
       max: (resFeeBig + BigInt(inclusionFee.max)).toString(),
     };
     const cost = {
-      cpuInsns: String((simData as any).cost?.cpuInsns ?? '0'),
-      memBytes: String((simData as any).cost?.memBytes ?? (simData as any).cost?.memByte ?? '0'),
+      cpuInsns: String((simData as any).cost?.cpuInsns ?? "0"),
+      memBytes: String(
+        (simData as any).cost?.memBytes ??
+          (simData as any).cost?.memByte ??
+          "0",
+      ),
     };
 
     return ok({ resourceFee, inclusionFee, total, cost });
@@ -413,9 +436,15 @@ export class TransactionPipeline {
    * @param tx - The assembled, unsigned transaction to prepare
    * @param options - Resource fee multiplier and retry policy
    */
-  async prepare(tx: Transaction, options?: PrepareOptions): Promise<PipelineResult<Transaction>> {
-    const multiplier = options?.resourceFeeMultiplier ?? DEFAULT_RESOURCE_FEE_MULTIPLIER;
-    this.pipelineLogger.debug('Preparing transaction', { resourceFeeMultiplier: multiplier });
+  async prepare(
+    tx: Transaction,
+    options?: PrepareOptions,
+  ): Promise<PipelineResult<Transaction>> {
+    const multiplier =
+      options?.resourceFeeMultiplier ?? DEFAULT_RESOURCE_FEE_MULTIPLIER;
+    this.pipelineLogger.debug("Preparing transaction", {
+      resourceFeeMultiplier: multiplier,
+    });
     return withRetry(
       async () => {
         const simulation = await this.server.simulateTransaction(tx);
@@ -424,21 +453,23 @@ export class TransactionPipeline {
         }
         if (rpc.Api.isSimulationRestore(simulation)) {
           throw TrustFlowError.simulationFailed(
-            'simulation requires restore preamble',
+            "simulation requires restore preamble",
             simulation.restorePreamble,
           );
         }
 
         const paddedFee = padResourceFee(simulation.minResourceFee, multiplier);
         simulation.transactionData.setResourceFee(paddedFee);
-        this.pipelineLogger.debug('Transaction prepared', {
+        this.pipelineLogger.debug("Transaction prepared", {
           paddedFee,
           minResourceFee: simulation.minResourceFee,
         });
-        return rpc.assembleTransaction(tx, { ...simulation, minResourceFee: paddedFee }).build();
+        return rpc
+          .assembleTransaction(tx, { ...simulation, minResourceFee: paddedFee })
+          .build();
       },
       options,
-      'prepare',
+      "prepare",
       this.client.timeoutMs,
     );
   }
@@ -458,8 +489,13 @@ export class TransactionPipeline {
    * @param innerTx - The inner transaction to wrap
    * @param options - Fee source and base fee for the fee-bump envelope
    */
-  buildFeeBump(innerTx: Transaction, options: FeeBumpOptions): PipelineResult<FeeBumpTransaction> {
-    this.pipelineLogger.debug('Building fee-bump transaction', { feeSource: options.feeSource });
+  buildFeeBump(
+    innerTx: Transaction,
+    options: FeeBumpOptions,
+  ): PipelineResult<FeeBumpTransaction> {
+    this.pipelineLogger.debug("Building fee-bump transaction", {
+      feeSource: options.feeSource,
+    });
     try {
       const baseFee = options.baseFee ?? innerTx.fee;
       const feeBump = TransactionBuilder.buildFeeBumpTransaction(
@@ -468,11 +504,15 @@ export class TransactionPipeline {
         innerTx,
         this.client.getNetworkPassphrase(),
       );
-      this.pipelineLogger.debug('Fee-bump transaction built', { baseFee });
+      this.pipelineLogger.debug("Fee-bump transaction built", { baseFee });
       return ok(feeBump);
     } catch (e) {
-      this.pipelineLogger.error('Fee-bump transaction build failed', { error: e });
-      return fail(TrustFlowError.feeBumpFailed('could not build fee-bump transaction', e));
+      this.pipelineLogger.error("Fee-bump transaction build failed", {
+        error: e,
+      });
+      return fail(
+        TrustFlowError.feeBumpFailed("could not build fee-bump transaction", e),
+      );
     }
   }
 
@@ -498,8 +538,9 @@ export class TransactionPipeline {
   async submit(
     tx: SubmittableTransaction,
     options?: SubmitOptions,
+    attemptTracker: { count: number } = { count: 0 },
   ): Promise<PipelineResult<PipelineSubmission>> {
-    let result = await this.submitEnvelope(tx, options);
+    let result = await this.submitEnvelope(tx, options, attemptTracker);
     const feeBumpOptions = options?.feeBump;
     const maxFeeBump = Math.max(0, Math.floor(feeBumpOptions?.maxFeeBump ?? 0));
 
@@ -517,7 +558,9 @@ export class TransactionPipeline {
 
     const multiplier = feeBumpOptions.feeBumpMultiplier ?? 2;
     if (!Number.isFinite(multiplier) || multiplier <= 1) {
-      this.pipelineLogger.warn('Invalid fee-bump multiplier; returning the original timeout');
+      this.pipelineLogger.warn(
+        "Invalid fee-bump multiplier; returning the original timeout",
+      );
       return result;
     }
 
@@ -529,26 +572,38 @@ export class TransactionPipeline {
       const stats = await withRetry(
         () => this.server.getFeeStats(),
         options,
-        'submit.feeStats',
+        "submit.feeStats",
         this.client.timeoutMs,
       );
       if (!stats.ok) {
-        this.pipelineLogger.warn('Could not read fee stats for automatic fee bump', {
-          error: stats.error.message,
-        });
+        this.pipelineLogger.warn(
+          "Could not read fee stats for automatic fee bump",
+          {
+            error: stats.error.message,
+          },
+        );
         return result;
       }
 
       try {
-        const feeStats = stats.data.sorobanInclusionFee.p90 || stats.data.inclusionFee.p90;
+        const feeStats =
+          stats.data.sorobanInclusionFee.p90 || stats.data.inclusionFee.p90;
         const networkBaseFee = BigInt(feeStats);
-        const baseline = [previousBaseFee, BigInt(tx.fee), networkBaseFee].reduce((max, fee) =>
-          fee > max ? fee : max,
-        );
-        const baseFee = ((baseline * multiplierBps + 9_999n) / 10_000n).toString();
-        const bumped = this.buildFeeBump(tx, { feeSource: feeBumpOptions.feeSource, baseFee });
+        const baseline = [
+          previousBaseFee,
+          BigInt(tx.fee),
+          networkBaseFee,
+        ].reduce((max, fee) => (fee > max ? fee : max));
+        const baseFee = (
+          (baseline * multiplierBps + 9_999n) /
+          10_000n
+        ).toString();
+        const bumped = this.buildFeeBump(tx, {
+          feeSource: feeBumpOptions.feeSource,
+          baseFee,
+        });
         if (!bumped.ok) {
-          this.pipelineLogger.warn('Automatic fee-bump construction failed', {
+          this.pipelineLogger.warn("Automatic fee-bump construction failed", {
             error: bumped.error.message,
           });
           return result;
@@ -556,27 +611,31 @@ export class TransactionPipeline {
 
         bumped.data.sign(feeBumpOptions.feeSource);
         await this.notifyFeeBump(feeBumpOptions, {
-          previousHash: currentEnvelope.hash().toString('hex'),
-          hash: bumped.data.hash().toString('hex'),
+          previousHash: currentEnvelope.hash().toString("hex"),
+          hash: bumped.data.hash().toString("hex"),
           baseFee,
           attempt: bumpNumber,
-          reason: 'confirmation-timeout',
+          reason: "confirmation-timeout",
         });
 
-        this.pipelineLogger.info('Resubmitting transaction with a higher fee', {
+        this.pipelineLogger.info("Resubmitting transaction with a higher fee", {
           bumpNumber,
           maxFeeBump,
           baseFee,
         });
         currentEnvelope = bumped.data;
         previousBaseFee = BigInt(baseFee);
-        result = await this.submitEnvelope(bumped.data, { ...options, feeBump: undefined });
+        result = await this.submitEnvelope(
+          bumped.data,
+          { ...options, feeBump: undefined },
+          attemptTracker,
+        );
         if (result.ok || !isConfirmationPollTimeout(result.error)) {
           return result;
         }
       } catch (e) {
         this.pipelineLogger.warn(
-          'Automatic fee bump failed; returning the latest submission result',
+          "Automatic fee bump failed; returning the latest submission result",
           {
             error: e,
           },
@@ -588,42 +647,52 @@ export class TransactionPipeline {
     return result;
   }
 
-  private async notifyFeeBump(options: FeeBumpOptions, event: FeeBumpEvent): Promise<void> {
+  private async notifyFeeBump(
+    options: FeeBumpOptions,
+    event: FeeBumpEvent,
+  ): Promise<void> {
     try {
       await options.onFeeBump?.(event);
     } catch (error) {
       // Notifications must not prevent an already signed recovery envelope from
       // being submitted.
-      this.pipelineLogger.warn('Fee-bump notification handler failed', { error });
+      this.pipelineLogger.warn("Fee-bump notification handler failed", {
+        error,
+      });
     }
   }
 
   private async submitEnvelope(
     tx: SubmittableTransaction,
     options?: SubmitOptions,
+    attemptTracker: { count: number } = { count: 0 },
   ): Promise<PipelineResult<PipelineSubmission>> {
-    this.pipelineLogger.debug('Submitting transaction', {
+    this.pipelineLogger.debug("Submitting transaction", {
       isFeeBump: tx instanceof FeeBumpTransaction,
     });
     return withRetry(
       async (attempt) => {
-        this.pipelineLogger.debug('Sending transaction to network', {
+        const totalAttempt = ++attemptTracker.count;
+        this.pipelineLogger.debug("Sending transaction to network", {
           attempt,
+          totalAttempt,
           hash: tx.hash?.toString(),
         });
         const sendResult = await this.server.sendTransaction(tx);
 
-        if (sendResult.status === 'ERROR') {
+        if (sendResult.status === "ERROR") {
           // Terminal: the node evaluated and rejected this envelope.
           throw TrustFlowError.submissionFailed(
             `node rejected transaction (${sendResult.hash})`,
             sendResult.errorResult,
           );
         }
-        if (sendResult.status === 'TRY_AGAIN_LATER') {
+        if (sendResult.status === "TRY_AGAIN_LATER") {
           // The node explicitly deferred: nothing was broadcast, so a replay
           // is safe and expected.
-          throw markTransient(TrustFlowError.submissionFailed('node reported TRY_AGAIN_LATER'));
+          throw markTransient(
+            TrustFlowError.submissionFailed("node reported TRY_AGAIN_LATER"),
+          );
         }
 
         const ledger = await this.pollForConfirmation(sendResult.hash, options);
@@ -632,12 +701,12 @@ export class TransactionPipeline {
           hash: sendResult.hash,
           ledger,
           feeBumped: tx instanceof FeeBumpTransaction,
-          attempts: attempt,
+          attempts: totalAttempt,
           feeCharged: tx.fee,
         };
       },
       options,
-      'submit',
+      "submit",
       this.client.timeoutMs,
     );
   }
@@ -654,7 +723,9 @@ export class TransactionPipeline {
    * @returns The confirmed submission, or a typed error. `ACCOUNT_NOT_FOUND`
    *   is returned — not thrown — when `params.account` is unregistered.
    */
-  async run(params: RunPipelineParams): Promise<PipelineResult<PipelineSubmission>> {
+  async run(
+    params: RunPipelineParams,
+  ): Promise<PipelineResult<PipelineSubmission>> {
     try {
       this.resolveAccount(params.account);
     } catch (e) {
@@ -674,8 +745,8 @@ export class TransactionPipeline {
     } catch (e) {
       // Only the queue wait raises a TrustFlowError here; `execute` reports
       // expected failures through its result, so anything else is unexpected.
-      if (e instanceof TrustFlowError && e.code === 'TIMEOUT') {
-        this.pipelineLogger.error('Pipeline queue timeout', {
+      if (e instanceof TrustFlowError && e.code === "TIMEOUT") {
+        this.pipelineLogger.error("Pipeline queue timeout", {
           sourceAccount: params.sourceAccount,
         });
         return fail(e);
@@ -691,10 +762,14 @@ export class TransactionPipeline {
    * @param sourceAccount - Public key (G...) of the source account
    */
   queueDepth(sourceAccount: string): number {
-    return queueDepth(queueKey(this.client.getNetworkPassphrase(), sourceAccount));
+    return queueDepth(
+      queueKey(this.client.getNetworkPassphrase(), sourceAccount),
+    );
   }
 
-  private async execute(params: RunPipelineParams): Promise<PipelineResult<PipelineSubmission>> {
+  private async execute(
+    params: RunPipelineParams,
+  ): Promise<PipelineResult<PipelineSubmission>> {
     const assembled = await this.assemble(params, params.prepare);
     if (!assembled.ok) {
       return assembled;
@@ -705,19 +780,28 @@ export class TransactionPipeline {
       return prepared;
     }
 
-    this.pipelineLogger.debug('Signing transaction', { signersCount: params.signers.length });
+    this.pipelineLogger.debug("Signing transaction", {
+      signersCount: params.signers.length,
+    });
     prepared.data.sign(...params.signers);
 
-    const submitted = await this.submit(prepared.data, params.submit);
+    const attemptTracker = { count: 0 };
+    const submitted = await this.submit(
+      prepared.data,
+      params.submit,
+      attemptTracker,
+    );
     if (submitted.ok) {
-      this.pipelineLogger.info('Transaction confirmed', {
+      this.pipelineLogger.info("Transaction confirmed", {
         hash: submitted.data.hash,
         ledger: submitted.data.ledger,
       });
       return submitted;
     }
 
-    this.pipelineLogger.warn('Transaction submission failed', { error: submitted.error.message });
+    this.pipelineLogger.warn("Transaction submission failed", {
+      error: submitted.error.message,
+    });
 
     const feeBumpOptions = params.submit?.feeBump;
     if (!feeBumpOptions || !isFeeRelated(submitted.error)) {
@@ -725,11 +809,13 @@ export class TransactionPipeline {
     }
 
     // Reload account sequence before building fee-bump to prevent collision if original was confirmed
-    this.pipelineLogger.info('Attempting fee-bump retry', { feeSource: feeBumpOptions.feeSource });
+    this.pipelineLogger.info("Attempting fee-bump retry", {
+      feeSource: feeBumpOptions.feeSource,
+    });
     const reloaded = await withRetry(
       () => this.server.getAccount(params.sourceAccount),
       params.prepare,
-      'assemble',
+      "assemble",
       this.client.timeoutMs,
     );
     if (reloaded.ok) {
@@ -743,9 +829,12 @@ export class TransactionPipeline {
       // resource fee from the base fee — otherwise the rebuilt transaction would have no
       // resource footprint at all (ext = 0) and would be rejected.
       const ext = prepared.data.toEnvelope().v1().tx().ext();
-      const sorobanData = ext.switch() === 1 ? (ext.value() as xdr.SorobanTransactionData) : null;
+      const sorobanData =
+        ext.switch() === 1 ? (ext.value() as xdr.SorobanTransactionData) : null;
       const operations = prepared.data.toEnvelope().v1().tx().operations();
-      const resourceFee = sorobanData ? BigInt(sorobanData.resourceFee().toString()) : 0n;
+      const resourceFee = sorobanData
+        ? BigInt(sorobanData.resourceFee().toString())
+        : 0n;
       const inclusiveBaseFee = BigInt(prepared.data.fee) - resourceFee;
       const perOperationFee =
         operations.length > 0 && inclusiveBaseFee > 0n
@@ -762,7 +851,10 @@ export class TransactionPipeline {
 
       const timeBounds = prepared.data.timeBounds;
       if (timeBounds) {
-        freshTx.setTimebounds(Number(timeBounds.minTime), Number(timeBounds.maxTime));
+        freshTx.setTimebounds(
+          Number(timeBounds.minTime),
+          Number(timeBounds.maxTime),
+        );
       } else {
         freshTx.setTimeout(30);
       }
@@ -781,31 +873,38 @@ export class TransactionPipeline {
       // The escalation is a recovery attempt: if the fee-bump envelope cannot
       // even be built, the caller still needs the reason the original
       // submission failed, so surface that instead of the construction error.
-      this.pipelineLogger.warn('Fee-bump build failed; returning the original submission error', {
-        error: feeBumped.error.message,
-      });
+      this.pipelineLogger.warn(
+        "Fee-bump build failed; returning the original submission error",
+        {
+          error: feeBumped.error.message,
+        },
+      );
       return submitted;
     }
 
     feeBumped.data.sign(feeBumpOptions.feeSource);
 
     await this.notifyFeeBump(feeBumpOptions, {
-      previousHash: prepared.data.hash().toString('hex'),
-      hash: feeBumped.data.hash().toString('hex'),
+      previousHash: prepared.data.hash().toString("hex"),
+      hash: feeBumped.data.hash().toString("hex"),
       baseFee: feeBumpOptions.baseFee ?? prepared.data.fee,
       attempt: 1,
-      reason: 'fee-rejection',
+      reason: "fee-rejection",
     });
 
-    const escalatedSubmission = await this.submit(feeBumped.data, {
-      ...params.submit,
-      feeBump: undefined,
-    });
+    const escalatedSubmission = await this.submit(
+      feeBumped.data,
+      {
+        ...params.submit,
+        feeBump: undefined,
+      },
+      attemptTracker,
+    );
     if (!escalatedSubmission.ok) {
       return escalatedSubmission;
     }
 
-    this.pipelineLogger.info('Fee-bump transaction confirmed', {
+    this.pipelineLogger.info("Fee-bump transaction confirmed", {
       hash: escalatedSubmission.data.hash,
     });
     return ok({ ...escalatedSubmission.data, feeBumped: true });
@@ -818,17 +917,24 @@ export class TransactionPipeline {
     const attempts = options?.pollAttempts ?? DEFAULT_POLL_ATTEMPTS;
     const intervalMs = options?.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
     const pollTimeoutMs = options?.pollTimeoutMs;
-    const deadline = pollTimeoutMs !== undefined ? Date.now() + pollTimeoutMs : undefined;
+    const deadline =
+      pollTimeoutMs !== undefined ? Date.now() + pollTimeoutMs : undefined;
 
     /** True once the overall confirmation deadline has elapsed. */
-    const deadlineExpired = (): boolean => deadline !== undefined && Date.now() >= deadline;
+    const deadlineExpired = (): boolean =>
+      deadline !== undefined && Date.now() >= deadline;
 
     /** The envelope may or may not have landed; the node never rejected it, so a replay is a valid recovery. */
     const throwDeadline = (): never => {
-      throw markTransient(TrustFlowError.timedOut(pollTimeoutMs as number, 'confirmation polling'));
+      throw markTransient(
+        TrustFlowError.timedOut(
+          pollTimeoutMs as number,
+          "confirmation polling",
+        ),
+      );
     };
 
-    this.pipelineLogger.debug('Polling for transaction confirmation', {
+    this.pipelineLogger.debug("Polling for transaction confirmation", {
       hash,
       maxAttempts: attempts,
       intervalMs,
@@ -841,7 +947,7 @@ export class TransactionPipeline {
       const result = await withRetry(
         () => this.server.getTransaction(hash),
         options,
-        'submit.poll',
+        "submit.poll",
         this.client.timeoutMs,
       );
       // Unwrap the poll stage's own retry wrapper so the surrounding
@@ -856,12 +962,17 @@ export class TransactionPipeline {
         // Terminal: the transaction is on the ledger and failed. Resending it
         // cannot change the result and only confuses double-submit tracking
         // (#245), so this is not marked transient.
-        throw TrustFlowError.submissionFailed(`transaction ${hash} failed on-chain`);
+        throw TrustFlowError.submissionFailed(
+          `transaction ${hash} failed on-chain`,
+        );
       }
 
       if (i < attempts - 1) {
         // Cap the sleep so a long interval still observes the deadline promptly.
-        const remaining = deadline === undefined ? intervalMs : Math.max(0, deadline - Date.now());
+        const remaining =
+          deadline === undefined
+            ? intervalMs
+            : Math.max(0, deadline - Date.now());
         await sleep(Math.min(intervalMs, remaining));
       }
     }
@@ -871,7 +982,9 @@ export class TransactionPipeline {
     // The envelope may or may not have landed; the node never rejected it, so
     // a replay of the identical envelope is a valid recovery.
     throw markTransient(
-      TrustFlowError.submissionFailed(`timed out waiting for transaction ${hash} to confirm`),
+      TrustFlowError.submissionFailed(
+        `timed out waiting for transaction ${hash} to confirm`,
+      ),
     );
   }
 }

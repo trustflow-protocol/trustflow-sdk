@@ -405,6 +405,7 @@ describe('TransactionPipeline.run', () => {
     if (!result.ok) return;
     expect(result.data.feeBumped).toBe(true);
     expect(result.data.hash).toBe('second');
+    expect(result.data.attempts).toBe(2);
     expect(sendSpy).toHaveBeenCalledTimes(2);
   });
 
@@ -454,7 +455,69 @@ describe('TransactionPipeline.run', () => {
     if (!result.ok) return;
     expect(result.data.feeBumped).toBe(true);
     expect(result.data.hash).toBe('second');
+    expect(result.data.attempts).toBe(2);
     expect(sendSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it('totals submission attempts across initial retries and fee-bump escalation (#644)', async () => {
+    const source = Keypair.random();
+    const sponsor = Keypair.random();
+
+    jest
+      .spyOn(rpc.Server.prototype, 'getAccount')
+      .mockResolvedValue(new Account(source.publicKey(), '100'));
+    jest.spyOn(rpc.Server.prototype, 'simulateTransaction').mockResolvedValue(simSuccess('500'));
+
+    const sendSpy = jest
+      .spyOn(rpc.Server.prototype, 'sendTransaction')
+      .mockResolvedValueOnce({
+        status: 'TRY_AGAIN_LATER',
+        hash: 'first-1',
+        latestLedger: 1,
+        latestLedgerCloseTime: 1,
+      })
+      .mockResolvedValueOnce({
+        status: 'TRY_AGAIN_LATER',
+        hash: 'first-2',
+        latestLedger: 2,
+        latestLedgerCloseTime: 2,
+      })
+      .mockResolvedValueOnce({
+        status: 'TRY_AGAIN_LATER',
+        hash: 'bumped-1',
+        latestLedger: 3,
+        latestLedgerCloseTime: 3,
+      })
+      .mockResolvedValueOnce({
+        status: 'PENDING',
+        hash: 'bumped-2',
+        latestLedger: 4,
+        latestLedgerCloseTime: 4,
+      });
+    jest.spyOn(rpc.Server.prototype, 'getTransaction').mockResolvedValue({
+      status: rpc.Api.GetTransactionStatus.SUCCESS,
+      ledger: 12,
+    } as unknown as rpc.Api.GetTransactionResponse);
+
+    const pipeline = new TransactionPipeline(makeClient());
+    const result = await pipeline.run({
+      sourceAccount: source.publicKey(),
+      operations: [new Contract(CONTRACT_ID).call('increment')],
+      signers: [source],
+      submit: {
+        maxAttempts: 2,
+        baseDelayMs: 1,
+        pollIntervalMs: 1,
+        feeBump: { feeSource: sponsor, baseFee: '5000' },
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.feeBumped).toBe(true);
+    expect(result.data.hash).toBe('bumped-2');
+    expect(result.data.attempts).toBe(4);
+    expect(sendSpy).toHaveBeenCalledTimes(4);
   });
 });
 
@@ -693,7 +756,7 @@ describe('TransactionPipeline.submit confirmation polling', () => {
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.data).toMatchObject({ hash: 'bumped', ledger: 88, feeBumped: true });
+    expect(result.data).toMatchObject({ hash: 'bumped', ledger: 88, feeBumped: true, attempts: 2 });
     expect(sendSpy).toHaveBeenCalledTimes(2);
     expect(sendSpy.mock.calls[1][0]).toBeInstanceOf(FeeBumpTransaction);
     expect(feeStatsSpy).toHaveBeenCalledTimes(1);
@@ -738,6 +801,7 @@ describe('TransactionPipeline.submit confirmation polling', () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.data.hash).toBe('second-bump');
+    expect(result.data.attempts).toBe(3);
     expect(sendSpy).toHaveBeenCalledTimes(3);
     expect(notifications).toEqual([
       { baseFee: '1200', attempt: 1 },
