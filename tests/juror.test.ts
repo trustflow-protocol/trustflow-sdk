@@ -463,5 +463,11 @@ describe('JurorClient.submitReveal (Issue #462)', () => {
       expect(resultHex.error).toMatch(/Salt must be exactly 32 bytes/);
     }
   });
+
+  it('retains no salts in memory when maxStoredSalts is 0 (#638)', () => {
+    const jurors = new JurorClient(CONFIG, { maxStoredSalts: 0 });
+    const commitment = jurors.createVoteCommitment(true);
+    expect(jurors.getStoredSalt(commitment.commitmentHex)).toBeUndefined();
+  });
 });
 

@@ -1,5 +1,5 @@
-import { hash } from '@stellar/stellar-sdk';
-import type { ContractConfig } from '../types/contract';
+import { hash } from "@stellar/stellar-sdk";
+import type { ContractConfig } from "../types/contract";
 import type {
   CastVoteParams,
   CastVoteResult,
@@ -9,14 +9,17 @@ import type {
   SubmitRevealParams,
   SubmitRevealResult,
   JurorClientOptions,
-} from '../types/juror';
-export type { JurorClientOptions } from '../types/juror';
-import type { SDKResult } from '../types/index';
+} from "../types/juror";
+export type { JurorClientOptions } from "../types/juror";
+import type { SDKResult } from "../types/index";
 
-import { buildVoteArgs } from '../contract/build';
-import { VoteSchema } from '../schemas';
+import { isValidEscrowId, isValidStellarAddress } from "../utils/validation";
+import { buildVoteArgs, buildRevealArgs } from "../contract/build";
+import { randomBytes } from "../utils/crypto";
+import { TrustFlowError } from "../errors";
+import { VoteSchema } from "../schemas";
 
-const VALID_CHOICES: VoteChoice[] = ['approve', 'reject', 'abstain'];
+const VALID_CHOICES: VoteChoice[] = ["approve", "reject", "abstain"];
 
 /**
  * Constructs a vote commitment matching the contracts/trustflow/src/lib.rs hash_vote
@@ -32,22 +35,31 @@ const VALID_CHOICES: VoteChoice[] = ['approve', 'reject', 'abstain'];
  *               32 cryptographically secure random bytes are automatically generated.
  * @returns VoteCommitment object containing commitment hash, salt, and encoded formats.
  */
-export function createVoteCommitment(voteForDepositor: boolean, salt?: Uint8Array): VoteCommitment {
-  if ((voteForDepositor as unknown) === 'abstain') {
+export function createVoteCommitment(
+  voteForDepositor: boolean,
+  salt?: Uint8Array,
+): VoteCommitment {
+  if ((voteForDepositor as unknown) === "abstain") {
     throw new TrustFlowError(
       "Commit-reveal voting does not support 'abstain'. Callers needing 'abstain' must cast a plaintext vote instead.",
-      'VALIDATION_ERROR',
+      "VALIDATION_ERROR",
     );
   }
 
-  if (typeof voteForDepositor !== 'boolean') {
-    throw new TrustFlowError('voteForDepositor must be a boolean', 'VALIDATION_ERROR');
+  if (typeof voteForDepositor !== "boolean") {
+    throw new TrustFlowError(
+      "voteForDepositor must be a boolean",
+      "VALIDATION_ERROR",
+    );
   }
 
   let finalSalt: Uint8Array;
   if (salt !== undefined) {
     if (!(salt instanceof Uint8Array) || salt.length !== 32) {
-      throw new TrustFlowError('Salt must be exactly 32 bytes', 'VALIDATION_ERROR');
+      throw new TrustFlowError(
+        "Salt must be exactly 32 bytes",
+        "VALIDATION_ERROR",
+      );
     }
     finalSalt = salt;
   } else {
@@ -60,9 +72,9 @@ export function createVoteCommitment(voteForDepositor: boolean, salt?: Uint8Arra
   preimage.set(finalSalt, 1);
 
   const commitment = new Uint8Array(hash(Buffer.from(preimage)));
-  const commitmentHex = Buffer.from(commitment).toString('hex');
-  const saltHex = Buffer.from(finalSalt).toString('hex');
-  const ciphertext = Buffer.from(commitment).toString('base64');
+  const commitmentHex = Buffer.from(commitment).toString("hex");
+  const saltHex = Buffer.from(finalSalt).toString("hex");
+  const ciphertext = Buffer.from(commitment).toString("base64");
 
   return {
     commitment,
@@ -87,19 +99,28 @@ export function createVoteCommitment(voteForDepositor: boolean, salt?: Uint8Arra
  * @param salt - The 32-byte secret salt used during commitment creation
  * @returns RevealVoteResult containing the vote, salt, and verified commitment hash
  */
-export function revealVote(voteForDepositor: boolean, salt: Uint8Array): RevealVoteResult {
-  if ((voteForDepositor as unknown) === 'abstain') {
+export function revealVote(
+  voteForDepositor: boolean,
+  salt: Uint8Array,
+): RevealVoteResult {
+  if ((voteForDepositor as unknown) === "abstain") {
     throw new TrustFlowError(
       "Commit-reveal voting does not support 'abstain'. Callers needing 'abstain' must cast a plaintext vote instead.",
-      'VALIDATION_ERROR',
+      "VALIDATION_ERROR",
     );
   }
 
-  if (typeof voteForDepositor !== 'boolean') {
-    throw new TrustFlowError('voteForDepositor must be a boolean', 'VALIDATION_ERROR');
+  if (typeof voteForDepositor !== "boolean") {
+    throw new TrustFlowError(
+      "voteForDepositor must be a boolean",
+      "VALIDATION_ERROR",
+    );
   }
   if (!(salt instanceof Uint8Array) || salt.length !== 32) {
-    throw new TrustFlowError('Salt must be exactly 32 bytes', 'VALIDATION_ERROR');
+    throw new TrustFlowError(
+      "Salt must be exactly 32 bytes",
+      "VALIDATION_ERROR",
+    );
   }
 
   const voteByte = voteForDepositor ? 1 : 0;
@@ -108,8 +129,8 @@ export function revealVote(voteForDepositor: boolean, salt: Uint8Array): RevealV
   preimage.set(salt, 1);
 
   const commitment = new Uint8Array(hash(Buffer.from(preimage)));
-  const commitmentHex = Buffer.from(commitment).toString('hex');
-  const saltHex = Buffer.from(salt).toString('hex');
+  const commitmentHex = Buffer.from(commitment).toString("hex");
+  const saltHex = Buffer.from(salt).toString("hex");
 
   return {
     voteForDepositor,
@@ -156,7 +177,10 @@ export function revealVote(voteForDepositor: boolean, salt: Uint8Array): RevealV
  * ```
  */
 export class JurorClient {
-  private readonly storedSalts = new Map<string, { salt: Uint8Array; expiresAt?: number }>();
+  private readonly storedSalts = new Map<
+    string,
+    { salt: Uint8Array; expiresAt?: number }
+  >();
 
   constructor(
     private readonly config: ContractConfig,
@@ -176,7 +200,10 @@ export class JurorClient {
    * @param salt - Optional 32-byte salt; generated automatically if omitted
    * @returns VoteCommitment with commitment hash, salt, and hex/base64 strings
    */
-  createVoteCommitment(voteForDepositor: boolean, salt?: Uint8Array): VoteCommitment {
+  createVoteCommitment(
+    voteForDepositor: boolean,
+    salt?: Uint8Array,
+  ): VoteCommitment {
     const commitment = createVoteCommitment(voteForDepositor, salt);
     const key = commitment.commitmentHex;
 
@@ -189,20 +216,26 @@ export class JurorClient {
       }
     }
 
-    if (
-      this.options.maxStoredSalts !== undefined &&
-      this.options.maxStoredSalts > 0 &&
-      this.storedSalts.size >= this.options.maxStoredSalts &&
-      !this.storedSalts.has(key)
-    ) {
-      const oldestKey = this.storedSalts.keys().next().value;
-      if (oldestKey !== undefined) {
-        this.storedSalts.delete(oldestKey);
+    if (this.options.maxStoredSalts !== undefined) {
+      if (this.options.maxStoredSalts <= 0) {
+        this.storedSalts.clear();
+        return commitment;
+      }
+      if (
+        this.storedSalts.size >= this.options.maxStoredSalts &&
+        !this.storedSalts.has(key)
+      ) {
+        const oldestKey = this.storedSalts.keys().next().value;
+        if (oldestKey !== undefined) {
+          this.storedSalts.delete(oldestKey);
+        }
       }
     }
 
     const expiresAt =
-      this.options.saltTtlMs !== undefined ? Date.now() + this.options.saltTtlMs : undefined;
+      this.options.saltTtlMs !== undefined
+        ? Date.now() + this.options.saltTtlMs
+        : undefined;
     this.storedSalts.set(key, { salt: commitment.salt, expiresAt });
     return commitment;
   }
@@ -227,9 +260,9 @@ export class JurorClient {
    */
   getStoredSalt(commitment: Uint8Array | string): Uint8Array | undefined {
     const key =
-      typeof commitment === 'string'
+      typeof commitment === "string"
         ? commitment.toLowerCase()
-        : Buffer.from(commitment).toString('hex');
+        : Buffer.from(commitment).toString("hex");
     const entry = this.storedSalts.get(key);
     if (!entry) return undefined;
     if (entry.expiresAt !== undefined && entry.expiresAt <= Date.now()) {
@@ -247,9 +280,9 @@ export class JurorClient {
    */
   removeStoredSalt(commitment: Uint8Array | string): boolean {
     const key =
-      typeof commitment === 'string'
+      typeof commitment === "string"
         ? commitment.toLowerCase()
-        : Buffer.from(commitment).toString('hex');
+        : Buffer.from(commitment).toString("hex");
     return this.storedSalts.delete(key);
   }
 
@@ -260,11 +293,17 @@ export class JurorClient {
     this.storedSalts.clear();
   }
 
-  static createVoteCommitment(voteForDepositor: boolean, salt?: Uint8Array): VoteCommitment {
+  static createVoteCommitment(
+    voteForDepositor: boolean,
+    salt?: Uint8Array,
+  ): VoteCommitment {
     return createVoteCommitment(voteForDepositor, salt);
   }
 
-  static revealVote(voteForDepositor: boolean, salt: Uint8Array): RevealVoteResult {
+  static revealVote(
+    voteForDepositor: boolean,
+    salt: Uint8Array,
+  ): RevealVoteResult {
     return revealVote(voteForDepositor, salt);
   }
 
@@ -282,20 +321,29 @@ export class JurorClient {
     });
     if (!validation.success) {
       const fieldErrors = Object.entries(validation.error.flatten().fieldErrors)
-        .map(([field, msgs]) => `${field}: ${msgs?.join(', ')}`)
-        .join('; ');
+        .map(([field, msgs]) => `${field}: ${msgs?.join(", ")}`)
+        .join("; ");
       return { ok: false, error: `Validation failed: ${fieldErrors}` };
     }
 
-    if (!params.vote.encrypted && !VALID_CHOICES.includes(params.vote.choice as VoteChoice)) {
-      return { ok: false, error: `vote.choice must be one of: ${VALID_CHOICES.join(', ')}` };
+    if (
+      !params.vote.encrypted &&
+      !VALID_CHOICES.includes(params.vote.choice as VoteChoice)
+    ) {
+      return {
+        ok: false,
+        error: `vote.choice must be one of: ${VALID_CHOICES.join(", ")}`,
+      };
     }
 
     let args: unknown[];
     try {
       args = buildVoteArgs(params.disputeId, params.jurorAddress, params.vote);
     } catch (e) {
-      return { ok: false, error: `Failed to encode vote arguments: ${String(e)}` };
+      return {
+        ok: false,
+        error: `Failed to encode vote arguments: ${String(e)}`,
+      };
     }
     // Encoded ScVal args are ready for the shared tx-pipeline once wired to a
     // live signer; this returns the prepared call metadata in the meantime.
@@ -324,7 +372,9 @@ export class JurorClient {
    * @param params - disputeId, jurorAddress, voteForDepositor, and secret salt
    * @returns `{ ok: true, data: { txHash, ... } }` on success, `{ ok: false, error }` on failure
    */
-  async submitReveal(params: SubmitRevealParams): Promise<SDKResult<SubmitRevealResult>>;
+  async submitReveal(
+    params: SubmitRevealParams,
+  ): Promise<SDKResult<SubmitRevealResult>>;
   async submitReveal(
     disputeId: string,
     jurorAddress: string,
@@ -338,7 +388,7 @@ export class JurorClient {
     salt?: Uint8Array | string,
   ): Promise<SDKResult<SubmitRevealResult>> {
     let p: SubmitRevealParams;
-    if (typeof paramsOrDisputeId === 'object' && paramsOrDisputeId !== null) {
+    if (typeof paramsOrDisputeId === "object" && paramsOrDisputeId !== null) {
       p = paramsOrDisputeId;
     } else {
       p = {
@@ -350,7 +400,7 @@ export class JurorClient {
     }
 
     if (!isValidEscrowId(p.disputeId)) {
-      return { ok: false, error: 'disputeId is required' };
+      return { ok: false, error: "disputeId is required" };
     }
     if (!isValidStellarAddress(p.jurorAddress)) {
       return {
@@ -358,37 +408,51 @@ export class JurorClient {
         error: `Invalid Stellar address for "jurorAddress": ${p.jurorAddress}`,
       };
     }
-    if ((p.voteForDepositor as unknown) === 'abstain') {
+    if ((p.voteForDepositor as unknown) === "abstain") {
       return {
         ok: false,
         error:
           "Commit-reveal voting does not support 'abstain'. Callers needing 'abstain' must cast a plaintext vote instead.",
       };
     }
-    if (typeof p.voteForDepositor !== 'boolean') {
-      return { ok: false, error: 'voteForDepositor must be a boolean' };
+    if (typeof p.voteForDepositor !== "boolean") {
+      return { ok: false, error: "voteForDepositor must be a boolean" };
     }
 
     if (!p.salt) {
-      return { ok: false, error: 'salt is required' };
+      return { ok: false, error: "salt is required" };
     }
-    if (typeof p.salt === 'string') {
+    if (typeof p.salt === "string") {
       if (p.salt.length !== 64 || !/^[0-9a-fA-F]+$/.test(p.salt)) {
-        return { ok: false, error: 'Salt must be exactly 32 bytes (64 hex characters)' };
+        return {
+          ok: false,
+          error: "Salt must be exactly 32 bytes (64 hex characters)",
+        };
       }
     } else if (p.salt instanceof Uint8Array) {
       if (p.salt.length !== 32) {
-        return { ok: false, error: 'Salt must be exactly 32 bytes' };
+        return { ok: false, error: "Salt must be exactly 32 bytes" };
       }
     } else {
-      return { ok: false, error: 'Salt must be a 32-byte Uint8Array or 64-character hex string' };
+      return {
+        ok: false,
+        error: "Salt must be a 32-byte Uint8Array or 64-character hex string",
+      };
     }
 
     let args: unknown[];
     try {
-      args = buildRevealArgs(p.disputeId, p.jurorAddress, p.voteForDepositor, p.salt);
+      args = buildRevealArgs(
+        p.disputeId,
+        p.jurorAddress,
+        p.voteForDepositor,
+        p.salt,
+      );
     } catch (e) {
-      return { ok: false, error: `Failed to encode reveal arguments: ${String(e)}` };
+      return {
+        ok: false,
+        error: `Failed to encode reveal arguments: ${String(e)}`,
+      };
     }
     void args;
 
