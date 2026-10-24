@@ -41,11 +41,11 @@ export const ACCOUNT_SNAPSHOT_VERSION = 1;
 export class AccountManager {
   private readonly byId = new Map<string, AccountContext>();
   /**
-   * Secondary index from address to id, so a context registered under a custom
-   * id is still reachable by its `G...` address — callers think in addresses
-   * even when the UI keyed them by id.
+   * Secondary index from address to registered ids, so contexts registered
+   * under custom ids remain reachable by their `G...` address even when
+   * multiple ids share the same address (#613).
    */
-  private readonly idByAddress = new Map<string, string>();
+  private readonly idByAddress = new Map<string, Set<string>>();
   private readonly listeners = new Set<AccountChangeListener>();
   private readonly eventListeners = new Map<string, Set<(...args: any[]) => void>>();
   private currentActiveId: string | null = null;
@@ -332,6 +332,11 @@ export class AccountManager {
    */
   activate(ref: string): AccountContext {
     const account = this.require(ref);
+    const ids = this.idByAddress.get(account.address);
+    if (ids && ids.has(account.id)) {
+      ids.delete(account.id);
+      ids.add(account.id);
+    }
     if (this.currentActiveId !== account.id) {
       const previousId = this.currentActiveId;
       this.currentActiveId = account.id;
@@ -473,20 +478,47 @@ export class AccountManager {
     const trimmed = ref.trim();
     const direct = this.byId.get(trimmed);
     if (direct) return direct;
-    const id = this.idByAddress.get(trimmed);
-    return id === undefined ? null : (this.byId.get(id) ?? null);
+    const ids = this.idByAddress.get(trimmed);
+    if (!ids || ids.size === 0) return null;
+    let chosenId: string | undefined;
+    for (const id of ids) {
+      chosenId = id;
+    }
+    return chosenId === undefined ? null : (this.byId.get(chosenId) ?? null);
   }
 
   private index(account: AccountContext): void {
+    const previous = this.byId.get(account.id);
+    if (previous && previous.address !== account.address) {
+      const prevIds = this.idByAddress.get(previous.address);
+      if (prevIds) {
+        prevIds.delete(account.id);
+        if (prevIds.size === 0) {
+          this.idByAddress.delete(previous.address);
+        }
+      }
+    }
     this.byId.set(account.id, account);
-    this.idByAddress.set(account.address, account.id);
+    let ids = this.idByAddress.get(account.address);
+    if (!ids) {
+      ids = new Set();
+      this.idByAddress.set(account.address, ids);
+    }
+    ids.delete(account.id);
+    ids.add(account.id);
   }
 
   private unindex(id: string): void {
     const account = this.byId.get(id);
     this.byId.delete(id);
-    if (account && this.idByAddress.get(account.address) === id) {
-      this.idByAddress.delete(account.address);
+    if (account) {
+      const ids = this.idByAddress.get(account.address);
+      if (ids) {
+        ids.delete(id);
+        if (ids.size === 0) {
+          this.idByAddress.delete(account.address);
+        }
+      }
     }
   }
 

@@ -66,6 +66,30 @@ describe('AccountManager', () => {
     expect(accounts.has(ALICE)).toBe(false);
   });
 
+  it('keeps remaining accounts reachable by address when two ids share an address and one is removed (#613)', () => {
+    const accounts = new AccountManager();
+    accounts.add({ id: 'wallet-conn', address: ALICE, label: 'Wallet' });
+    accounts.add({ id: 'keypair', address: ALICE, label: 'Keypair' });
+
+    expect(accounts.has(ALICE)).toBe(true);
+    expect(accounts.get(ALICE)?.id).toBe('keypair');
+
+    // Activating 'wallet-conn' makes it the preferred context for address lookup
+    accounts.activate('wallet-conn');
+    expect(accounts.get(ALICE)?.id).toBe('wallet-conn');
+
+    // Removing 'keypair' must not orphan 'wallet-conn' from address lookup
+    accounts.remove('keypair');
+    expect(accounts.has(ALICE)).toBe(true);
+    expect(accounts.get(ALICE)?.id).toBe('wallet-conn');
+    expect(accounts.get('wallet-conn')?.address).toBe(ALICE);
+
+    // Removing the last remaining context at ALICE clears the address index
+    accounts.remove('wallet-conn');
+    expect(accounts.has(ALICE)).toBe(false);
+    expect(accounts.get(ALICE)).toBeNull();
+  });
+
   it('rejects a blank or malformed address', () => {
     const accounts = new AccountManager();
     expect(() => accounts.add({ address: '' })).toThrow(TrustFlowError);
