@@ -3,9 +3,9 @@
  * Prevents cascading failures by failing fast when services are degraded.
  */
 
-import { TrustFlowError } from '../errors';
+import { TrustFlowError } from "../errors";
 
-export type CircuitState = 'CLOSED' | 'OPEN' | 'HALF_OPEN';
+export type CircuitState = "CLOSED" | "OPEN" | "HALF_OPEN";
 
 export interface CircuitBreakerConfig {
   /** Number of failures before opening circuit. Defaults to 5. */
@@ -21,7 +21,7 @@ export interface CircuitBreakerConfig {
 }
 
 export class CircuitBreaker {
-  private state: CircuitState = 'CLOSED';
+  private state: CircuitState = "CLOSED";
   private failureCount = 0;
   private successCount = 0;
   private lastFailureTime?: number;
@@ -43,9 +43,9 @@ export class CircuitBreaker {
    * Gets the current circuit state.
    */
   getState(): CircuitState {
-    if (this.state === 'OPEN') {
+    if (this.state === "OPEN") {
       if (this.nextRetryTime && Date.now() >= this.nextRetryTime) {
-        this.setState('HALF_OPEN');
+        this.setState("HALF_OPEN");
       }
     }
     return this.state;
@@ -58,10 +58,10 @@ export class CircuitBreaker {
   async execute<T>(fn: () => Promise<T>): Promise<T> {
     const state = this.getState();
 
-    if (state === 'OPEN') {
+    if (state === "OPEN") {
       throw new TrustFlowError(
-        'Circuit breaker is OPEN. Service unavailable. Retrying after timeout.',
-        'NETWORK_ERROR',
+        "Circuit breaker is OPEN. Service unavailable. Retrying after timeout.",
+        "NETWORK_ERROR",
       );
     }
 
@@ -81,10 +81,10 @@ export class CircuitBreaker {
   executeSync<T>(fn: () => T): T {
     const state = this.getState();
 
-    if (state === 'OPEN') {
+    if (state === "OPEN") {
       throw new TrustFlowError(
-        'Circuit breaker is OPEN. Service unavailable. Retrying after timeout.',
-        'NETWORK_ERROR',
+        "Circuit breaker is OPEN. Service unavailable. Retrying after timeout.",
+        "NETWORK_ERROR",
       );
     }
 
@@ -104,13 +104,13 @@ export class CircuitBreaker {
   private onSuccess(): void {
     this.failureCount = 0;
 
-    if (this.state === 'HALF_OPEN') {
+    if (this.state === "HALF_OPEN") {
       this.successCount++;
       if (this.successCount >= this.config.successThreshold) {
-        this.setState('CLOSED');
+        this.setState("CLOSED");
         this.successCount = 0;
       }
-    } else if (this.state === 'CLOSED') {
+    } else if (this.state === "CLOSED") {
       this.successCount = 0;
     }
   }
@@ -122,10 +122,14 @@ export class CircuitBreaker {
     this.lastFailureTime = Date.now();
     this.failureCount++;
 
-    if (this.state === 'HALF_OPEN') {
-      this.setState('OPEN');
-    } else if (this.state === 'CLOSED' && this.failureCount >= this.config.failureThreshold) {
-      this.setState('OPEN');
+    if (this.state === "HALF_OPEN") {
+      this.successCount = 0;
+      this.setState("OPEN");
+    } else if (
+      this.state === "CLOSED" &&
+      this.failureCount >= this.config.failureThreshold
+    ) {
+      this.setState("OPEN");
     }
   }
 
@@ -136,9 +140,12 @@ export class CircuitBreaker {
     const oldState = this.state;
     this.state = newState;
 
-    if (newState === 'OPEN') {
+    if (newState === "OPEN") {
+      this.successCount = 0;
       this.nextRetryTime = Date.now() + this.config.resetTimeoutMs;
       this.config.onOpen(`Circuit opened after ${this.failureCount} failures`);
+    } else if (newState === "HALF_OPEN") {
+      this.successCount = 0;
     }
 
     if (oldState !== newState) {
@@ -150,7 +157,7 @@ export class CircuitBreaker {
    * Manually resets the circuit to CLOSED state.
    */
   reset(): void {
-    this.state = 'CLOSED';
+    this.state = "CLOSED";
     this.failureCount = 0;
     this.successCount = 0;
     this.lastFailureTime = undefined;
