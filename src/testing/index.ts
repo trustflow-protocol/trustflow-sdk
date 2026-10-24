@@ -1,7 +1,12 @@
-import { xdr, nativeToScVal, scValToNative, SorobanDataBuilder } from '@stellar/stellar-sdk';
+import {
+  xdr,
+  nativeToScVal,
+  scValToNative,
+  SorobanDataBuilder,
+} from "@stellar/stellar-sdk";
 
-import type { Escrow, EscrowState, EscrowStatus } from '../types/index';
-import type { WalletAdapter } from '../wallet/types';
+import type { Escrow, EscrowState, EscrowStatus } from "../types/index";
+import type { WalletAdapter } from "../wallet/types";
 
 /**
  * Validates whether a value is a structurally valid Stellar `ScVal` (round-trips through XDR).
@@ -39,8 +44,8 @@ export function toBeValidScVal(received: unknown) {
     pass,
     message: () =>
       pass
-        ? 'expected value not to be a structurally valid Stellar ScVal'
-        : 'expected value to be a structurally valid Stellar ScVal (XDR round-trip failed)',
+        ? "expected value not to be a structurally valid Stellar ScVal"
+        : "expected value to be a structurally valid Stellar ScVal (XDR round-trip failed)",
   };
 }
 
@@ -78,14 +83,16 @@ export interface MockHorizonServerOptions {
  * const balance = await client.getBalance("G...");
  * ```
  */
-export function createMockHorizonServer(options: MockHorizonServerOptions = {}) {
-  const balanceXLM = options.balanceXLM ?? '1000';
-  const sequenceNumber = options.sequenceNumber ?? '1';
-  const txHash = options.txHash ?? 'mock-horizon-tx-hash-1234567890';
+export function createMockHorizonServer(
+  options: MockHorizonServerOptions = {},
+) {
+  const balanceXLM = options.balanceXLM ?? "1000";
+  const sequenceNumber = options.sequenceNumber ?? "1";
+  const txHash = options.txHash ?? "mock-horizon-tx-hash-1234567890";
   const baseFee = options.baseFee ?? 100;
 
   return {
-    serverURL: new URL('https://mock-horizon.stellar.org'),
+    serverURL: new URL("https://mock-horizon.stellar.org"),
     loadAccount: async (accountId: string) => ({
       id: accountId,
       accountId: () => accountId,
@@ -93,7 +100,7 @@ export function createMockHorizonServer(options: MockHorizonServerOptions = {}) 
       sequence: sequenceNumber,
       balances: [
         {
-          asset_type: 'native',
+          asset_type: "native",
           balance: balanceXLM,
         },
       ],
@@ -117,7 +124,7 @@ export interface MockSorobanServerOptions {
   /** Memory bytes reported by simulation (default: "20000") */
   memBytes?: string;
   /** Transaction status returned by getTransaction (default: "SUCCESS") */
-  txStatus?: 'SUCCESS' | 'PENDING' | 'FAILED' | 'NOT_FOUND';
+  txStatus?: "SUCCESS" | "PENDING" | "FAILED" | "NOT_FOUND";
   /** Return value ScVal for simulation and getTransaction */
   returnValueScVal?: xdr.ScVal;
   /** Native JS return value to be encoded to ScVal if returnValueScVal is omitted */
@@ -161,7 +168,7 @@ export interface MockSorobanServer {
   clearSimulationError: () => void;
   setReturnValue: (val: unknown) => void;
   setReturnValueScVal: (scval: xdr.ScVal) => void;
-  setTxStatus: (status: 'SUCCESS' | 'PENDING' | 'FAILED' | 'NOT_FOUND') => void;
+  setTxStatus: (status: "SUCCESS" | "PENDING" | "FAILED" | "NOT_FOUND") => void;
   setEscrow: (id: string | number, escrow: any) => void;
   getEscrow: (id: string | number) => any;
   deleteEscrow: (id: string | number) => void;
@@ -169,11 +176,14 @@ export interface MockSorobanServer {
   unregisterMethod: (name: string) => void;
 }
 
-function extractInvocation(tx: any): { functionName?: string; args?: any[] } | null {
+function extractInvocation(
+  tx: any,
+): { functionName?: string; args?: any[] } | null {
   try {
-    if (!tx || !Array.isArray(tx.operations) || tx.operations.length === 0) return null;
+    if (!tx || !Array.isArray(tx.operations) || tx.operations.length === 0)
+      return null;
     const op = tx.operations[0];
-    if (op.type === 'invokeHostFunction' && op.func) {
+    if (op.type === "invokeHostFunction" && op.func) {
       const hf = op.func.invokeContract?.();
       if (hf) {
         const functionName = hf.functionName?.().toString();
@@ -197,11 +207,11 @@ function extractInvocation(tx: any): { functionName?: string; args?: any[] } | n
 function toScValHelper(val: unknown): xdr.ScVal {
   if (val instanceof xdr.ScVal) return val;
   if (val === undefined || val === null) return xdr.ScVal.scvVoid();
-  if (typeof val === 'boolean') return nativeToScVal(val, { type: 'bool' });
-  if (typeof val === 'string') return nativeToScVal(val, { type: 'string' });
-  if (typeof val === 'number') return nativeToScVal(val, { type: 'i32' });
-  if (typeof val === 'bigint') return nativeToScVal(val, { type: 'i128' });
-  if (typeof val === 'object') {
+  if (typeof val === "boolean") return nativeToScVal(val, { type: "bool" });
+  if (typeof val === "string") return nativeToScVal(val, { type: "string" });
+  if (typeof val === "number") return nativeToScVal(val, { type: "i32" });
+  if (typeof val === "bigint") return nativeToScVal(val, { type: "i128" });
+  if (typeof val === "object") {
     try {
       return nativeToScVal(val);
     } catch {
@@ -232,17 +242,19 @@ function toScValHelper(val: unknown): xdr.ScVal {
  * const client = new TrustFlowClient({ contractId: "C...", rpcServer: rpcServer as any });
  * ```
  */
-export function createMockSorobanServer(options: MockSorobanServerOptions = {}): MockSorobanServer {
-  let currentMinResourceFee = options.minResourceFee ?? '10000';
-  let currentCpuInsns = options.cpuInsns ?? '50000';
-  let currentMemBytes = options.memBytes ?? '20000';
-  let currentTxStatus = options.txStatus ?? 'SUCCESS';
+export function createMockSorobanServer(
+  options: MockSorobanServerOptions = {},
+): MockSorobanServer {
+  let currentMinResourceFee = options.minResourceFee ?? "10000";
+  let currentCpuInsns = options.cpuInsns ?? "50000";
+  let currentMemBytes = options.memBytes ?? "20000";
+  let currentTxStatus = options.txStatus ?? "SUCCESS";
   let currentLatencyMs = options.latencyMs ?? 0;
   let currentError: Error | string | null = options.error ?? null;
   let currentSimulationError: string | null = options.simulationError ?? null;
   let currentLatestLedger = options.latestLedger ?? 1000;
   let currentNetworkPassphrase =
-    options.networkPassphrase ?? 'Test SDF Future Network ; October 2022';
+    options.networkPassphrase ?? "Test SDF Future Network ; October 2022";
 
   let currentReturnValueScVal: xdr.ScVal = options.returnValueScVal
     ? options.returnValueScVal
@@ -278,12 +290,14 @@ export function createMockSorobanServer(options: MockSorobanServerOptions = {}):
 
   const checkError = () => {
     if (currentError) {
-      throw typeof currentError === 'string' ? new Error(currentError) : currentError;
+      throw typeof currentError === "string"
+        ? new Error(currentError)
+        : currentError;
     }
   };
 
   return {
-    serverURL: new URL('https://mock-soroban-rpc.stellar.org'),
+    serverURL: new URL("https://mock-soroban-rpc.stellar.org"),
 
     simulateTransaction: async (tx: any) => {
       await applyLatency();
@@ -293,7 +307,7 @@ export function createMockSorobanServer(options: MockSorobanServerOptions = {}):
         return {
           error: currentSimulationError,
           minResourceFee: currentMinResourceFee,
-          cost: { cpuInsns: '0', memBytes: '0' },
+          cost: { cpuInsns: "0", memBytes: "0" },
         };
       }
 
@@ -301,9 +315,9 @@ export function createMockSorobanServer(options: MockSorobanServerOptions = {}):
         return {
           minResourceFee: currentMinResourceFee,
           cost: { cpuInsns: currentCpuInsns, memBytes: currentMemBytes },
-          transactionData: new SorobanDataBuilder().build().toXDR('base64'),
+          transactionData: new SorobanDataBuilder().build().toXDR("base64"),
           restorePreamble: {
-            minResourceFee: '5000',
+            minResourceFee: "5000",
             transactionData: new SorobanDataBuilder(),
           },
         };
@@ -318,12 +332,14 @@ export function createMockSorobanServer(options: MockSorobanServerOptions = {}):
           retval = toScValHelper(result);
         } else if (
           escrowsMap.size > 0 &&
-          (invocation.functionName.includes('escrow') || invocation.functionName.includes('get'))
+          (invocation.functionName.includes("escrow") ||
+            invocation.functionName.includes("get"))
         ) {
           // Only an exact id match is returned; an unknown id falls through to the
           // default return value rather than another configured escrow (Issue #609).
           const firstArg = invocation.args?.[0];
-          const match = escrowsMap.get(firstArg) ?? escrowsMap.get(String(firstArg));
+          const match =
+            escrowsMap.get(firstArg) ?? escrowsMap.get(String(firstArg));
           if (match !== undefined) {
             retval = toScValHelper(match);
           }
@@ -339,7 +355,7 @@ export function createMockSorobanServer(options: MockSorobanServerOptions = {}):
         result: {
           retval,
         },
-        transactionData: new SorobanDataBuilder().build().toXDR('base64'),
+        transactionData: new SorobanDataBuilder().build().toXDR("base64"),
         latestLedger: currentLatestLedger,
       };
     },
@@ -348,8 +364,8 @@ export function createMockSorobanServer(options: MockSorobanServerOptions = {}):
       await applyLatency();
       checkError();
       return {
-        hash: 'mock-soroban-tx-hash-1234567890',
-        status: 'PENDING',
+        hash: "mock-soroban-tx-hash-1234567890",
+        status: "PENDING",
       };
     },
 
@@ -358,8 +374,8 @@ export function createMockSorobanServer(options: MockSorobanServerOptions = {}):
       checkError();
       return {
         status: currentTxStatus,
-        resultXdr: currentReturnValueScVal.toXDR('base64'),
-        resultMetaXdr: 'AAAA',
+        resultXdr: currentReturnValueScVal.toXDR("base64"),
+        resultMetaXdr: "AAAA",
         latestLedger: currentLatestLedger,
       };
     },
@@ -387,7 +403,7 @@ export function createMockSorobanServer(options: MockSorobanServerOptions = {}):
       checkError();
       return {
         accountId: () => accountId,
-        sequenceNumber: () => '1',
+        sequenceNumber: () => "1",
         incrementSequenceNumber: () => {},
       };
     },
@@ -405,7 +421,7 @@ export function createMockSorobanServer(options: MockSorobanServerOptions = {}):
       await applyLatency();
       checkError();
       return {
-        status: 'healthy',
+        status: "healthy",
       };
     },
 
@@ -446,7 +462,7 @@ export function createMockSorobanServer(options: MockSorobanServerOptions = {}):
       currentReturnValueScVal = scval;
     },
 
-    setTxStatus: (status: 'SUCCESS' | 'PENDING' | 'FAILED' | 'NOT_FOUND') => {
+    setTxStatus: (status: "SUCCESS" | "PENDING" | "FAILED" | "NOT_FOUND") => {
       currentTxStatus = status;
     },
 
@@ -490,18 +506,19 @@ export class MockWalletAdapter {
   constructor(
     optionsOrKey:
       | string
-      | MockWalletAdapterOptions = 'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF',
+      | MockWalletAdapterOptions = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
   ) {
-    if (typeof optionsOrKey === 'string') {
+    if (typeof optionsOrKey === "string") {
       this.publicKey = optionsOrKey;
     } else {
       this.publicKey =
-        optionsOrKey.publicKey ?? 'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF';
+        optionsOrKey.publicKey ??
+        "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF";
       this.connected = optionsOrKey.connected ?? true;
       if (optionsOrKey.rejectNextError) {
         this.rejectNext(optionsOrKey.rejectNextError);
       } else if (optionsOrKey.shouldReject) {
-        this.rejectNext('User rejected request');
+        this.rejectNext("User rejected request");
       }
     }
   }
@@ -509,8 +526,10 @@ export class MockWalletAdapter {
   /**
    * Configures the next method call (connect, signTransaction, signAuthEntry) to reject with an error (Issue #478).
    */
-  rejectNext(error: Error | string = new Error('User declined transaction')): this {
-    this.nextRejection = typeof error === 'string' ? new Error(error) : error;
+  rejectNext(
+    error: Error | string = new Error("User declined transaction"),
+  ): this {
+    this.nextRejection = typeof error === "string" ? new Error(error) : error;
     return this;
   }
 
@@ -564,7 +583,7 @@ export class MockWalletAdapter {
         const signed = await this.signTransaction(xdr);
         return { signedXDR: signed };
       },
-      getNetwork: async () => 'TESTNET',
+      getNetwork: async () => "TESTNET",
       signMessage: async (message: string) => `mock_sig_${message}`,
     };
   }
@@ -578,12 +597,12 @@ export class MockWalletAdapter {
    */
   asWalletAdapter(): WalletAdapter {
     return {
-      type: 'freighter',
+      type: "freighter",
       isAvailable: async () => this.isConnected(),
       connect: async () => ({
-        type: 'freighter',
+        type: "freighter",
         publicKey: await this.connect(),
-        network: 'TESTNET',
+        network: "TESTNET",
       }),
       sign: async (xdrString) => this.signTransaction(xdrString),
       signMessage: async (message) => `mock_sig_${message}`,
@@ -596,24 +615,45 @@ export class MockWalletAdapter {
  * Creates a browser init script string for Playwright's `page.addInitScript()` or Cypress
  * to inject a mock `window.freighter` provider before page scripts run (Issue #478).
  */
-export function createPlaywrightWalletScript(options: MockWalletAdapterOptions = {}): string {
-  const pubKey = options.publicKey ?? 'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF';
-  const shouldReject = !!options.shouldReject;
+export function createPlaywrightWalletScript(
+  options: MockWalletAdapterOptions = {},
+): string {
+  const pubKey =
+    options.publicKey ??
+    "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF";
+  const connected = options.connected ?? true;
+  const rejectMessage = options.rejectNextError
+    ? typeof options.rejectNextError === "string"
+      ? options.rejectNextError
+      : options.rejectNextError.message
+    : options.shouldReject
+      ? "User rejected request"
+      : null;
   return `
-    window.freighter = {
-      isConnected: async () => true,
-      isAllowed: async () => true,
-      getPublicKey: async () => {
-        if (${shouldReject}) throw new Error('User rejected request');
-        return '${pubKey}';
-      },
-      signTransaction: async (xdr) => {
-        if (${shouldReject}) throw new Error('User declined transaction');
-        return { signedXDR: xdr };
-      },
-      getNetwork: async () => 'TESTNET',
-      signMessage: async (msg) => 'mock_signature'
-    };
+    (() => {
+      let nextRejection = ${JSON.stringify(rejectMessage)};
+      const checkRejection = () => {
+        if (nextRejection !== null) {
+          const msg = nextRejection;
+          nextRejection = null;
+          throw new Error(msg);
+        }
+      };
+      window.freighter = {
+        isConnected: async () => ${JSON.stringify(connected)},
+        isAllowed: async () => ${JSON.stringify(connected)},
+        getPublicKey: async () => {
+          checkRejection();
+          return ${JSON.stringify(pubKey)};
+        },
+        signTransaction: async (xdr) => {
+          checkRejection();
+          return { signedXDR: xdr };
+        },
+        getNetwork: async () => 'TESTNET',
+        signMessage: async (msg) => 'mock_signature'
+      };
+    })();
   `;
 }
 
@@ -625,11 +665,11 @@ export function createPlaywrightWalletScript(options: MockWalletAdapterOptions =
  */
 export function buildMockEscrow(overrides: Partial<Escrow> = {}): Escrow {
   return {
-    id: 'mock-escrow-1',
-    sender: 'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF',
-    recipient: 'GCFIRY65OQE7DFP5KLNS2PF2LVZMUZYJX4OZIEQ36N2IQANUB5XVYOJR',
+    id: "mock-escrow-1",
+    sender: "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+    recipient: "GCFIRY65OQE7DFP5KLNS2PF2LVZMUZYJX4OZIEQ36N2IQANUB5XVYOJR",
     amount: 10_000_000n,
-    status: 'ACTIVE' as EscrowStatus,
+    status: "ACTIVE" as EscrowStatus,
     createdAt: Date.now(),
     ...overrides,
   };
@@ -641,17 +681,19 @@ export function buildMockEscrow(overrides: Partial<Escrow> = {}): Escrow {
  * @param overrides - Optional property overrides
  * @returns Complete EscrowState mock object
  */
-export function buildMockEscrowState(overrides: Partial<EscrowState> = {}): EscrowState {
+export function buildMockEscrowState(
+  overrides: Partial<EscrowState> = {},
+): EscrowState {
   return {
-    id: 'esc-mock-123',
+    id: "esc-mock-123",
     params: {
-      depositor: 'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF',
-      beneficiary: 'GCFIRY65OQE7DFP5KLNS2PF2LVZMUZYJX4OZIEQ36N2IQANUB5XVYOJR',
-      amountXLM: '1.0',
+      depositor: "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+      beneficiary: "GCFIRY65OQE7DFP5KLNS2PF2LVZMUZYJX4OZIEQ36N2IQANUB5XVYOJR",
+      amountXLM: "1.0",
     },
-    status: 'active',
+    status: "active",
     contractEscrowId: 1,
-    txHash: 'mock-tx-hash-abcdef',
+    txHash: "mock-tx-hash-abcdef",
     createdAt: Date.now(),
     ...overrides,
   };
@@ -665,15 +707,15 @@ export function buildMockEscrowState(overrides: Partial<EscrowState> = {}): Escr
  */
 export function buildMockContractEvent(overrides: Record<string, any> = {}) {
   return {
-    type: 'escrow.created',
-    escrowId: '1',
+    type: "escrow.created",
+    escrowId: "1",
     payload: {
-      depositor: 'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF',
-      beneficiary: 'GCFIRY65OQE7DFP5KLNS2PF2LVZMUZYJX4OZIEQ36N2IQANUB5XVYOJR',
-      amount: '10000000',
+      depositor: "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+      beneficiary: "GCFIRY65OQE7DFP5KLNS2PF2LVZMUZYJX4OZIEQ36N2IQANUB5XVYOJR",
+      amount: "10000000",
     },
     blockNumber: 100,
-    txHash: 'mock-event-tx-hash',
+    txHash: "mock-event-tx-hash",
     timestamp: Date.now(),
     ...overrides,
   };

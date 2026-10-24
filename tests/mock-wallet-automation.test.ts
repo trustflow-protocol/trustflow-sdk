@@ -32,4 +32,26 @@ describe('MockWalletAdapter rejection and browser injection (Issue #478)', () =>
     expect(script).toContain('window.freighter');
     expect(script).toContain('G123');
   });
+
+  it('rejects only the first call when shouldReject is true in createPlaywrightWalletScript (#637)', async () => {
+    const win: Record<string, any> = {};
+    const script = createPlaywrightWalletScript({ publicKey: 'G123', shouldReject: true });
+    new Function('window', script)(win);
+
+    await expect(win.freighter.signTransaction('AAAA')).rejects.toThrow('User rejected request');
+    await expect(win.freighter.signTransaction('AAAA')).resolves.toEqual({ signedXDR: 'AAAA' });
+    await expect(win.freighter.getPublicKey()).resolves.toBe('G123');
+  });
+
+  it('honours rejectNextError in createPlaywrightWalletScript as a one-shot rejection (#637)', async () => {
+    const win: Record<string, any> = {};
+    const script = createPlaywrightWalletScript({
+      publicKey: 'G123',
+      rejectNextError: new Error('Custom rejection reason'),
+    });
+    new Function('window', script)(win);
+
+    await expect(win.freighter.getPublicKey()).rejects.toThrow('Custom rejection reason');
+    await expect(win.freighter.getPublicKey()).resolves.toBe('G123');
+  });
 });
