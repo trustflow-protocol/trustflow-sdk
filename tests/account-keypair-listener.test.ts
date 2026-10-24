@@ -153,4 +153,29 @@ describe('AccountManager keypair update and accountChanged events - Issue #360',
       expect(err.field).toBe('keypair');
     }
   });
+
+  it('preserves an already-registered account label on setKeypair() (#612)', () => {
+    const pubKey = kp1.publicKey();
+    manager.add({
+      address: pubKey,
+      label: 'Alice (depositor)',
+      roles: ['depositor'],
+      apiKey: 'alice-key',
+      data: { tier: 'pro' },
+    });
+
+    manager.setKeypair(kp1);
+
+    expect(manager.get(pubKey)).toMatchObject({
+      address: pubKey,
+      label: 'Alice (depositor)',
+      roles: ['depositor'],
+      apiKey: 'alice-key',
+      data: { tier: 'pro' },
+    });
+
+    // A freshly registered keypair still defaults to "Active Keypair"
+    manager.setKeypair(kp2);
+    expect(manager.get(kp2.publicKey())?.label).toBe('Active Keypair');
+  });
 });

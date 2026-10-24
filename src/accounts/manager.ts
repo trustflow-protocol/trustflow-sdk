@@ -1,6 +1,6 @@
-import { Keypair } from '@stellar/stellar-sdk';
-import { TrustFlowError } from '../errors';
-import { isValidStellarAddress } from '../utils/validation';
+import { Keypair } from "@stellar/stellar-sdk";
+import { TrustFlowError } from "../errors";
+import { isValidStellarAddress } from "../utils/validation";
 import type {
   AccountChangeEvent,
   AccountChangeListener,
@@ -9,7 +9,7 @@ import type {
   AccountPatch,
   AccountSnapshot,
   AddAccountInput,
-} from './types';
+} from "./types";
 
 /** Snapshot schema version emitted by {@link AccountManager.exportState}. */
 export const ACCOUNT_SNAPSHOT_VERSION = 1;
@@ -47,7 +47,10 @@ export class AccountManager {
    */
   private readonly idByAddress = new Map<string, string>();
   private readonly listeners = new Set<AccountChangeListener>();
-  private readonly eventListeners = new Map<string, Set<(...args: any[]) => void>>();
+  private readonly eventListeners = new Map<
+    string,
+    Set<(...args: any[]) => void>
+  >();
   private currentActiveId: string | null = null;
   private keypair: Keypair | null = null;
 
@@ -65,20 +68,24 @@ export class AccountManager {
    * @param keypair - Stellar Keypair instance
    */
   setKeypair(keypair: Keypair): void {
-    if (!keypair || typeof keypair.publicKey !== 'function') {
-      throw TrustFlowError.validation('keypair', 'Expected a valid Keypair instance');
+    if (!keypair || typeof keypair.publicKey !== "function") {
+      throw TrustFlowError.validation(
+        "keypair",
+        "Expected a valid Keypair instance",
+      );
     }
     this.keypair = keypair;
     const newPublicKey = keypair.publicKey();
+    const existing = this.byId.get(newPublicKey);
 
     this.add({
       address: newPublicKey,
       id: newPublicKey,
-      label: 'Active Keypair',
+      label: existing?.label ?? "Active Keypair",
       activate: true,
     });
 
-    this.emit('accountChanged', newPublicKey);
+    this.emit("accountChanged", newPublicKey);
   }
 
   /**
@@ -89,7 +96,10 @@ export class AccountManager {
    * @param listener - Callback function
    * @returns Unsubscribe cleanup function
    */
-  on(event: 'accountChanged', listener: (newPublicKey: string) => void): () => void;
+  on(
+    event: "accountChanged",
+    listener: (newPublicKey: string) => void,
+  ): () => void;
   on(event: string, listener: (...args: any[]) => void): () => void;
   on(event: string, listener: (...args: any[]) => void): () => void {
     if (!this.eventListeners.has(event)) {
@@ -161,7 +171,9 @@ export class AccountManager {
 
   /** The active account, or `null` when none is registered. */
   get active(): AccountContext | null {
-    return this.currentActiveId === null ? null : (this.byId.get(this.currentActiveId) ?? null);
+    return this.currentActiveId === null
+      ? null
+      : (this.byId.get(this.currentActiveId) ?? null);
   }
 
   /**
@@ -176,12 +188,15 @@ export class AccountManager {
    * @throws {TrustFlowError} `VALIDATION_ERROR` for a blank/invalid address
    */
   add(input: AddAccountInput): AccountContext {
-    const address = (input.address ?? '').trim();
+    const address = (input.address ?? "").trim();
     if (!address) {
-      throw TrustFlowError.validation('address', 'Required');
+      throw TrustFlowError.validation("address", "Required");
     }
     if (!isValidStellarAddress(address)) {
-      throw TrustFlowError.validation('address', `Not a valid Stellar public key: ${address}`);
+      throw TrustFlowError.validation(
+        "address",
+        `Not a valid Stellar public key: ${address}`,
+      );
     }
 
     const id = input.id?.trim() || address;
@@ -200,7 +215,7 @@ export class AccountManager {
         lastUsedAt: existing.lastUsedAt,
       });
       this.index(merged);
-      this.emit({ type: 'updated', account: merged, previous: existing });
+      this.emit({ type: "updated", account: merged, previous: existing });
       this.activateIfRequested(id, input.activate);
       return merged;
     }
@@ -216,7 +231,7 @@ export class AccountManager {
       lastUsedAt: undefined,
     });
     this.index(account);
-    this.emit({ type: 'added', account });
+    this.emit({ type: "added", account });
     this.activateIfRequested(id, input.activate);
     return account;
   }
@@ -239,7 +254,7 @@ export class AccountManager {
       data: patch.data ? { ...current.data, ...patch.data } : current.data,
     });
     this.index(next);
-    this.emit({ type: 'updated', account: next, previous: current });
+    this.emit({ type: "updated", account: next, previous: current });
     return next;
   }
 
@@ -255,16 +270,24 @@ export class AccountManager {
     if (!account) return false;
     const wasActive = this.currentActiveId === account.id;
     this.unindex(account.id);
-    this.emit({ type: 'removed', account });
+    this.emit({ type: "removed", account });
     if (wasActive) {
       const nextActive = this.byId.keys().next();
       if (!nextActive.done) {
         this.currentActiveId = nextActive.value;
         const nextAccount = this.byId.get(nextActive.value)!;
-        this.emit({ type: 'activated', account: nextAccount, previousId: account.id });
+        this.emit({
+          type: "activated",
+          account: nextAccount,
+          previousId: account.id,
+        });
       } else {
         this.currentActiveId = null;
-        this.emit({ type: 'deactivated', account: null, previousId: account.id });
+        this.emit({
+          type: "deactivated",
+          account: null,
+          previousId: account.id,
+        });
       }
     }
     return true;
@@ -335,7 +358,7 @@ export class AccountManager {
     if (this.currentActiveId !== account.id) {
       const previousId = this.currentActiveId;
       this.currentActiveId = account.id;
-      this.emit({ type: 'activated', account, previousId });
+      this.emit({ type: "activated", account, previousId });
     }
     return account;
   }
@@ -374,7 +397,11 @@ export class AccountManager {
    * @param key - Key in the account's `data` bag
    * @param value - Value to store, or `undefined` to remove
    */
-  setData(ref: string | undefined, key: string, value: unknown): AccountContext {
+  setData(
+    ref: string | undefined,
+    key: string,
+    value: unknown,
+  ): AccountContext {
     const current = this.require(ref);
     const data = { ...current.data };
     if (value === undefined) {
@@ -384,7 +411,7 @@ export class AccountManager {
     }
     const next = this.freeze({ ...current, data });
     this.index(next);
-    this.emit({ type: 'updated', account: next, previous: current });
+    this.emit({ type: "updated", account: next, previous: current });
     return next;
   }
 
@@ -423,11 +450,14 @@ export class AccountManager {
    */
   importState(snapshot: AccountManagerSnapshot): void {
     if (!snapshot || !Array.isArray(snapshot.accounts)) {
-      throw TrustFlowError.validation('snapshot', 'must have an accounts array');
+      throw TrustFlowError.validation(
+        "snapshot",
+        "must have an accounts array",
+      );
     }
     if (snapshot.version !== ACCOUNT_SNAPSHOT_VERSION) {
       throw TrustFlowError.validation(
-        'snapshot.version',
+        "snapshot.version",
         `unsupported version ${String(snapshot.version)}; expected ${ACCOUNT_SNAPSHOT_VERSION}`,
       );
     }
@@ -448,9 +478,10 @@ export class AccountManager {
     }
 
     const wanted = snapshot.activeId;
-    this.currentActiveId = wanted !== null && this.byId.has(wanted) ? wanted : null;
+    this.currentActiveId =
+      wanted !== null && this.byId.has(wanted) ? wanted : null;
     if (this.currentActiveId) {
-      this.emit({ type: 'activated', account: this.active!, previousId: null });
+      this.emit({ type: "activated", account: this.active!, previousId: null });
     }
   }
 
@@ -458,12 +489,15 @@ export class AccountManager {
   clear(): void {
     for (const account of this.list()) {
       this.unindex(account.id);
-      this.emit({ type: 'removed', account });
+      this.emit({ type: "removed", account });
     }
     this.currentActiveId = null;
   }
 
-  private activateIfRequested(id: string, requested: boolean | undefined): void {
+  private activateIfRequested(
+    id: string,
+    requested: boolean | undefined,
+  ): void {
     if (requested ?? this.byId.size === 1) {
       this.activate(id);
     }
@@ -493,14 +527,14 @@ export class AccountManager {
   private freeze(account: AccountContext): AccountContext {
     return Object.freeze({
       ...account,
-      roles: Object.freeze([...account.roles]) as AccountContext['roles'],
+      roles: Object.freeze([...account.roles]) as AccountContext["roles"],
     });
   }
 
   emit(event: string, ...args: any[]): void;
   emit(event: AccountChangeEvent): void;
   emit(eventOrName: string | AccountChangeEvent, ...args: any[]): void {
-    if (typeof eventOrName === 'string') {
+    if (typeof eventOrName === "string") {
       const listeners = this.eventListeners.get(eventOrName);
       if (listeners) {
         for (const listener of [...listeners]) {
