@@ -74,6 +74,18 @@ describe('shouldRetryRequest', () => {
       ),
     ).toBe(true);
   });
+
+  it('never retries a cancelled request for idempotent or non-idempotent methods (#610)', () => {
+    const canceledGet = new axios.CanceledError('Request aborted');
+    (canceledGet as any).config = { method: 'get' };
+    expect(shouldRetryRequest(canceledGet)).toBe(false);
+
+    const canceledPost = new axios.CanceledError('Request aborted');
+    (canceledPost as any).config = { method: 'post', trustflowRetry: true };
+    expect(shouldRetryRequest(canceledPost)).toBe(false);
+
+    expect(shouldRetryRequest({ config: { method: 'get' }, code: 'ERR_CANCELED' })).toBe(false);
+  });
 });
 
 describe('apiRetryDelay', () => {
@@ -302,6 +314,15 @@ describe('installApiRetryInterceptor', () => {
 
     await expect(fail({ code: 'ECONNRESET', config })).resolves.toBeDefined();
     expect(request).toHaveBeenCalledTimes(1);
+  });
+
+  it('rethrows a cancelled GET request immediately without sleeping or replaying (#610)', async () => {
+    const { fail, request } = harness();
+    const canceled = new axios.CanceledError('Request aborted');
+    (canceled as any).config = { method: 'get' };
+
+    await expect(fail(canceled)).rejects.toBe(canceled);
+    expect(request).not.toHaveBeenCalled();
   });
 
   it('rethrows when the failure carries no request config', async () => {
