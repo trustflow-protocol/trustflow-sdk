@@ -66,6 +66,35 @@ function decodeBase32(str: string): Uint8Array | null {
 }
 
 /**
+ * Validates the decoded binary payload of a CIDv1 (shared by base32 and base58btc).
+ *
+ * Verifies the CIDv1 version byte (`0x01`), decodes the multicodec varint, and
+ * checks that the multihash function/length header matches the remaining digest bytes.
+ */
+function isValidCidV1Bytes(bytes: Uint8Array | null): boolean {
+  if (!bytes || bytes.length < 4) return false;
+  // Byte 0 must be CIDv1 (0x01)
+  if (bytes[0] !== 0x01) return false;
+
+  // Read multicodec varint starting at offset 1
+  let offset = 1;
+  while (offset < bytes.length && (bytes[offset] & 0x80) !== 0) {
+    offset++;
+  }
+  offset++; // Skip final byte of varint
+  if (offset >= bytes.length - 2) return false;
+
+  // Read multihash function and length
+  const hashFunc = bytes[offset];
+  const hashLen = bytes[offset + 1];
+  const remaining = bytes.length - (offset + 2);
+
+  // sha2-256 header verification when 0x12
+  if (hashFunc === 0x12 && hashLen !== 32) return false;
+  return remaining === hashLen;
+}
+
+/**
  * Validates whether a value is a strictly valid CIDv0 or CIDv1 string.
  *
  * For CIDv0 (Qm... 46 chars):
@@ -95,35 +124,14 @@ export function isValidCid(value: unknown): boolean {
   if (value.startsWith('b')) {
     if (value.length < 50 || !/^[a-z2-7]+$/.test(value.slice(1))) return false;
     const bytes = decodeBase32(value.slice(1));
-    if (!bytes || bytes.length < 4) return false;
-    // Byte 0 must be CIDv1 (0x01)
-    if (bytes[0] !== 0x01) return false;
-
-    // Read multicodec varint starting at offset 1
-    let offset = 1;
-    while (offset < bytes.length && (bytes[offset] & 0x80) !== 0) {
-      offset++;
-    }
-    offset++; // Skip final byte of varint
-    if (offset >= bytes.length - 2) return false;
-
-    // Read multihash function and length
-    const hashFunc = bytes[offset];
-    const hashLen = bytes[offset + 1];
-    const remaining = bytes.length - (offset + 2);
-
-    // sha2-256 header verification when 0x12
-    if (hashFunc === 0x12 && hashLen !== 32) return false;
-    return remaining === hashLen;
+    return isValidCidV1Bytes(bytes);
   }
 
   // CIDv1 base58btc (starts with 'z')
   if (value.startsWith('z')) {
     if (value.length < 40) return false;
     const bytes = decodeBase58(value.slice(1));
-    if (!bytes || bytes.length < 4) return false;
-    if (bytes[0] !== 0x01) return false;
-    return true;
+    return isValidCidV1Bytes(bytes);
   }
 
   return false;

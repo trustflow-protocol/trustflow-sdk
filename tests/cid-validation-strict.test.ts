@@ -109,6 +109,78 @@ describe('Strict CIDv0 and CIDv1 validation - Issue #349', () => {
       const corrupt = 'bafy' + 'a'.repeat(55);
       expect(isValidCid(corrupt)).toBe(false);
     });
+
+    it('rejects CIDv1 base58btc strings with invalid multicodec/multihash payloads (#605)', () => {
+      // Post-version-byte payload is 41 bytes of 0xFF padding (not a valid multicodec varint or multihash header)
+      expect(isValidCid('zSSX8YzB3JHrjo6vdi3AMoi7zpc8f6DcGxmYpb6oWXDAsGJ2sQSQ7UGE')).toBe(
+        false,
+      );
+      expect(validateCID('zSSX8YzB3JHrjo6vdi3AMoi7zpc8f6DcGxmYpb6oWXDAsGJ2sQSQ7UGE')).toBe(
+        false,
+      );
+      expect(getCidVersion('zSSX8YzB3JHrjo6vdi3AMoi7zpc8f6DcGxmYpb6oWXDAsGJ2sQSQ7UGE')).toBeNull();
+    });
+
+    it('fuzz-tests random CIDv1 base58btc post-version-byte payloads for structural consistency (#605)', () => {
+      const alphabet = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+      const encodeBase58 = (bytes: Uint8Array): string => {
+        const digits = [0];
+        for (let i = 0; i < bytes.length; i++) {
+          let carry = bytes[i];
+          for (let j = 0; j < digits.length; j++) {
+            const val = digits[j] * 256 + carry;
+            digits[j] = val % 58;
+            carry = (val / 58) | 0;
+          }
+          while (carry > 0) {
+            digits.push(carry % 58);
+            carry = (carry / 58) | 0;
+          }
+        }
+        let out = '';
+        for (let i = 0; i < bytes.length && bytes[i] === 0; i++) {
+          out += '1';
+        }
+        for (let i = digits.length - 1; i >= 0; i--) {
+          out += alphabet[digits[i]];
+        }
+        return out;
+      };
+
+      const isStructurallyConsistent = (bytes: Uint8Array): boolean => {
+        if (bytes.length < 4 || bytes[0] !== 0x01) return false;
+        let offset = 1;
+        while (offset < bytes.length && (bytes[offset] & 0x80) !== 0) {
+          offset++;
+        }
+        offset++;
+        if (offset >= bytes.length - 2) return false;
+        const hashFunc = bytes[offset];
+        const hashLen = bytes[offset + 1];
+        const remaining = bytes.length - (offset + 2);
+        if (hashFunc === 0x12 && hashLen !== 32) return false;
+        return remaining === hashLen;
+      };
+
+      let seed = 0x12345678;
+      const nextByte = () => {
+        seed = (seed * 1664525 + 1013904223) >>> 0;
+        return seed & 0xff;
+      };
+
+      for (let i = 0; i < 100; i++) {
+        const len = 30 + (nextByte() % 20);
+        const payload = new Uint8Array(len);
+        payload[0] = 0x01;
+        for (let j = 1; j < len; j++) {
+          payload[j] = nextByte();
+        }
+        const candidate = 'z' + encodeBase58(payload);
+        if (candidate.length >= 40 && !isStructurallyConsistent(payload)) {
+          expect(isValidCid(candidate)).toBe(false);
+        }
+      }
+    });
   });
 
   describe('Security and edge cases', () => {
