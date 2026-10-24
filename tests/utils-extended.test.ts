@@ -63,6 +63,10 @@ describe('isValidAddress', () => {
   it('truncateAddress short-circuits short input', () => {
     expect(truncateAddress('short')).toBe('short');
   });
+
+  it('truncateAddress with suffixLen = 0 returns only prefix and ellipsis (#629)', () => {
+    expect(truncateAddress(VALID_G, 10, 0)).toBe(`${VALID_G.slice(0, 10)}...`);
+  });
 });
 
 describe('CID validation', () => {

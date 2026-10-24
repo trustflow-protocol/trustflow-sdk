@@ -1,4 +1,4 @@
-import { TrustFlowError } from '../errors';
+import { TrustFlowError } from "../errors";
 
 /**
  * Converts a decimal amount string to base units (e.g. XLM to stroops) with exact bigint arithmetic.
@@ -9,39 +9,48 @@ import { TrustFlowError } from '../errors';
  * @throws {TrustFlowError} If the amount is invalid, has too many decimal places, or uses scientific notation
  */
 export function toBaseUnits(amount: string, decimals: number): bigint {
-  if (typeof amount !== 'string') {
-    throw TrustFlowError.validation('amount', `Amount must be a string, got ${typeof amount}`);
+  if (typeof amount !== "string") {
+    throw TrustFlowError.validation(
+      "amount",
+      `Amount must be a string, got ${typeof amount}`,
+    );
   }
   const trimmed = amount.trim();
   if (!trimmed) {
-    throw TrustFlowError.validation('amount', 'Amount string cannot be empty');
+    throw TrustFlowError.validation("amount", "Amount string cannot be empty");
   }
   if (!Number.isInteger(decimals) || decimals < 0) {
     throw TrustFlowError.validation(
-      'decimals',
+      "decimals",
       `Decimals must be a non-negative integer, got ${decimals}`,
     );
   }
   if (/[eE]/.test(trimmed)) {
-    throw TrustFlowError.validation('amount', `Scientific notation is not supported: "${trimmed}"`);
+    throw TrustFlowError.validation(
+      "amount",
+      `Scientific notation is not supported: "${trimmed}"`,
+    );
   }
   const match = trimmed.match(/^([+-])?(\d+)?(?:\.(\d+))?$/);
   if (!match || (!match[2] && !match[3])) {
-    throw TrustFlowError.validation('amount', `Invalid amount format: "${trimmed}"`);
+    throw TrustFlowError.validation(
+      "amount",
+      `Invalid amount format: "${trimmed}"`,
+    );
   }
-  const isNeg = match[1] === '-';
-  const wholeStr = match[2] ?? '0';
-  const fracStr = match[3] ?? '';
+  const isNeg = match[1] === "-";
+  const wholeStr = match[2] ?? "0";
+  const fracStr = match[3] ?? "";
 
   if (fracStr.length > decimals) {
     throw TrustFlowError.validation(
-      'amount',
+      "amount",
       `Amount "${trimmed}" has ${fracStr.length} decimal places, exceeding maximum of ${decimals}`,
     );
   }
 
   const whole = BigInt(wholeStr) * 10n ** BigInt(decimals);
-  const frac = fracStr ? BigInt(fracStr.padEnd(decimals, '0')) : 0n;
+  const frac = fracStr ? BigInt(fracStr.padEnd(decimals, "0")) : 0n;
   const total = whole + frac;
 
   return isNeg ? -total : total;
@@ -55,39 +64,45 @@ export function toBaseUnits(amount: string, decimals: number): bigint {
  * @returns Formatted decimal string with trailing zeros removed
  * @throws {TrustFlowError} If input is not an integer or decimals is negative
  */
-export function fromBaseUnits(amount: bigint | number | string, decimals: number): string {
+export function fromBaseUnits(
+  amount: bigint | number | string,
+  decimals: number,
+): string {
   if (!Number.isInteger(decimals) || decimals < 0) {
     throw TrustFlowError.validation(
-      'decimals',
+      "decimals",
       `Decimals must be a non-negative integer, got ${decimals}`,
     );
   }
   let big: bigint;
-  if (typeof amount === 'bigint') {
+  if (typeof amount === "bigint") {
     big = amount;
-  } else if (typeof amount === 'number') {
+  } else if (typeof amount === "number") {
     if (!Number.isInteger(amount)) {
       throw TrustFlowError.validation(
-        'amount',
+        "amount",
         `Conversion from base units requires an integer number, got ${amount}`,
       );
     }
     if (!Number.isSafeInteger(amount)) {
       throw TrustFlowError.validation(
-        'amount',
+        "amount",
         `Amount ${amount} exceeds Number.MAX_SAFE_INTEGER; use bigint or string`,
       );
     }
     big = BigInt(amount);
-  } else if (typeof amount === 'string') {
+  } else if (typeof amount === "string") {
     const trimmed = amount.trim();
     if (!/^[+-]?\d+$/.test(trimmed)) {
-      throw TrustFlowError.validation('amount', `Invalid base units integer string: "${amount}"`);
+      throw TrustFlowError.validation(
+        "amount",
+        `Invalid base units integer string: "${amount}"`,
+      );
     }
     big = BigInt(trimmed);
   } else {
     throw TrustFlowError.validation(
-      'amount',
+      "amount",
       `Expected bigint, number, or string, got ${typeof amount}`,
     );
   }
@@ -97,12 +112,12 @@ export function fromBaseUnits(amount: bigint | number | string, decimals: number
   const divisor = 10n ** BigInt(decimals);
   const whole = absVal / divisor;
   const frac = absVal % divisor;
-  const prefix = isNeg ? '-' : '';
+  const prefix = isNeg ? "-" : "";
 
   if (decimals === 0 || frac === 0n) {
     return `${prefix}${whole.toString()}`;
   }
-  const fracStr = frac.toString().padStart(decimals, '0').replace(/0+$/, '');
+  const fracStr = frac.toString().padStart(decimals, "0").replace(/0+$/, "");
   return `${prefix}${whole.toString()}.${fracStr}`;
 }
 
@@ -139,7 +154,7 @@ export function stroopsToXLM(stroops: bigint | number | string): string {
  * ```
  */
 export function parseAmount(xlm: string | number, decimals = 7): bigint {
-  return toBaseUnits(typeof xlm === 'string' ? xlm : String(xlm), decimals);
+  return toBaseUnits(typeof xlm === "string" ? xlm : String(xlm), decimals);
 }
 
 /**
@@ -176,11 +191,19 @@ export function formatAmount(stroops: bigint | number | string): string {
  * // 'GABCDE...QRST'
  * ```
  */
-export function truncateAddress(address: string, prefixLen = 6, suffixLen = 4): string {
-  if (address.length <= prefixLen + suffixLen + 3) {
+export function truncateAddress(
+  address: string,
+  prefixLen = 6,
+  suffixLen = 4,
+): string {
+  const safePrefixLen = Math.max(0, prefixLen);
+  const safeSuffixLen = Math.max(0, suffixLen);
+  if (address.length <= safePrefixLen + safeSuffixLen + 3) {
     return address;
   }
-  return `${address.slice(0, prefixLen)}...${address.slice(-suffixLen)}`;
+  const prefix = safePrefixLen > 0 ? address.slice(0, safePrefixLen) : "";
+  const suffix = safeSuffixLen > 0 ? address.slice(-safeSuffixLen) : "";
+  return `${prefix}...${suffix}`;
 }
 
 /**
@@ -195,7 +218,7 @@ export function truncateAddress(address: string, prefixLen = 6, suffixLen = 4): 
  * ```
  */
 export function formatTimestamp(ms: number): string {
-  return new Date(ms).toISOString().replace('T', ' ').slice(0, 19) + ' UTC';
+  return new Date(ms).toISOString().replace("T", " ").slice(0, 19) + " UTC";
 }
 
 /**
@@ -214,11 +237,11 @@ export function formatTimestamp(ms: number): string {
  */
 export function formatDateTime(
   ms: number,
-  locale = 'en-US',
+  locale = "en-US",
   options: Intl.DateTimeFormatOptions = {
-    dateStyle: 'medium',
-    timeStyle: 'medium',
-    timeZone: 'UTC',
+    dateStyle: "medium",
+    timeStyle: "medium",
+    timeZone: "UTC",
   },
 ): string {
   return new Intl.DateTimeFormat(locale, options).format(new Date(ms));
@@ -237,18 +260,18 @@ export function formatDateTime(
  * formatRelativeTime(Date.now() + 86400000); // 'in 1 day'
  * ```
  */
-export function formatRelativeTime(ms: number, locale = 'en-US'): string {
-  const rtf = new Intl.RelativeTimeFormat(locale, { numeric: 'auto' });
+export function formatRelativeTime(ms: number, locale = "en-US"): string {
+  const rtf = new Intl.RelativeTimeFormat(locale, { numeric: "auto" });
   const diffSec = Math.round((ms - Date.now()) / 1000);
 
   const units: Array<[Intl.RelativeTimeFormatUnit, number]> = [
-    ['year', 31536000],
-    ['month', 2592000],
-    ['week', 604800],
-    ['day', 86400],
-    ['hour', 3600],
-    ['minute', 60],
-    ['second', 1],
+    ["year", 31536000],
+    ["month", 2592000],
+    ["week", 604800],
+    ["day", 86400],
+    ["hour", 3600],
+    ["minute", 60],
+    ["second", 1],
   ];
 
   for (const [unit, seconds] of units) {
@@ -257,7 +280,7 @@ export function formatRelativeTime(ms: number, locale = 'en-US'): string {
       return rtf.format(diffSec < 0 ? -value : value, unit);
     }
   }
-  return rtf.format(0, 'second');
+  return rtf.format(0, "second");
 }
 
 /**
@@ -288,7 +311,7 @@ export function formatDuration(ms: number, compact = false): string {
   if (seconds % 60 > 0 && !compact) parts.push(`${seconds % 60}s`);
 
   if (compact && parts.length > 2) {
-    return parts.slice(0, 2).join(' ');
+    return parts.slice(0, 2).join(" ");
   }
-  return parts.join(' ') || '0s';
+  return parts.join(" ") || "0s";
 }
