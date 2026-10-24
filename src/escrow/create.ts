@@ -1,11 +1,14 @@
-import type { TrustFlowClient } from '../client';
-import { EscrowStatus } from '../types';
-import type { CreateEscrowParams, Escrow } from '../types';
-import { TrustFlowError } from '../errors';
-import { ESCROW_MIN_AMOUNT_STROOPS } from '../constants';
-import { buildCreateEscrowArgs } from '../contract/build';
-import { invokeContract } from '../contract/invoke';
-import { normalizeMilestoneExpiration, validateFutureExpiration } from '../utils/timezone';
+import type { TrustFlowClient } from "../client";
+import { EscrowStatus } from "../types";
+import type { CreateEscrowParams, Escrow } from "../types";
+import { TrustFlowError } from "../errors";
+import { ESCROW_MIN_AMOUNT_STROOPS } from "../constants";
+import { buildCreateEscrowArgs } from "../contract/build";
+import { invokeContract } from "../contract/invoke";
+import {
+  normalizeMilestoneExpiration,
+  validateFutureExpiration,
+} from "../utils/timezone";
 
 /**
  * Creates a new escrow by invoking `create_escrow` on the TrustFlow contract.
@@ -28,15 +31,22 @@ export async function createEscrow(
   params: CreateEscrowParams,
 ): Promise<Escrow> {
   if (params.amountStroops < ESCROW_MIN_AMOUNT_STROOPS) {
-    throw TrustFlowError.validation('amountStroops', `Minimum is ${ESCROW_MIN_AMOUNT_STROOPS}`);
+    throw TrustFlowError.validation(
+      "amountStroops",
+      `Minimum is ${ESCROW_MIN_AMOUNT_STROOPS}`,
+    );
   }
   if (!params.sender || !params.recipient) {
-    throw TrustFlowError.validation('sender/recipient', 'Both addresses are required');
+    throw TrustFlowError.validation(
+      "sender/recipient",
+      "Both addresses are required",
+    );
   }
 
   let deadlineSeconds: number | undefined;
   const deadlineInput = params.deadline ?? params.expiresAt;
-  const deadlineField = params.deadline !== undefined ? 'deadline' : 'expiresAt';
+  const deadlineField =
+    params.deadline !== undefined ? "deadline" : "expiresAt";
   if (deadlineInput !== undefined) {
     deadlineSeconds = validateFutureExpiration(deadlineInput, deadlineField);
   }
@@ -51,10 +61,11 @@ export async function createEscrow(
     recipient: params.recipient,
     amountStroops: params.amountStroops,
     durationBlocks: params.durationBlocks,
+    deadline: deadlineSeconds,
     milestones: normalizedMilestones ?? params.milestones,
   });
 
-  await invokeContract(client, 'create_escrow', args, params.sender);
+  await invokeContract(client, "create_escrow", args, params.sender);
 
   return {
     id: `escrow-${Date.now()}`,
@@ -63,7 +74,8 @@ export async function createEscrow(
     amount: params.amountStroops,
     status: EscrowStatus.Pending,
     createdAt: Date.now(),
-    expiresAt: deadlineSeconds !== undefined ? deadlineSeconds * 1000 : undefined,
+    expiresAt:
+      deadlineSeconds !== undefined ? deadlineSeconds * 1000 : undefined,
     deadline: deadlineSeconds,
     metadata: params.metadata,
     milestones: normalizedMilestones ?? params.milestones,

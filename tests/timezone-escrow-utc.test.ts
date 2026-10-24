@@ -1,4 +1,4 @@
-import { Keypair } from '@stellar/stellar-sdk';
+import { Keypair, nativeToScVal } from '@stellar/stellar-sdk';
 import {
   normalizeToUtcSeconds,
   validateFutureExpiration,
@@ -166,8 +166,30 @@ describe('Timezone and UTC deadline handling - Issue #358', () => {
       };
 
       const escrow = await createEscrow(client, params);
-      expect(escrow.deadline).toBe(Math.floor(futureDate.getTime() / 1000));
+      const expectedSeconds = Math.floor(futureDate.getTime() / 1000);
+      expect(escrow.deadline).toBe(expectedSeconds);
       expect(mockInvoke).toHaveBeenCalledTimes(1);
+      const [, method, args] = mockInvoke.mock.calls[0];
+      expect(method).toBe('create_escrow');
+      expect(args[4]).toEqual(nativeToScVal(expectedSeconds, { type: 'u64' }));
+    });
+
+    it('encodes expiresAt into create_escrow contract args when durationBlocks is omitted (#634)', async () => {
+      const expiresAtMs = Date.now() + 86400 * 1000;
+      const expectedSeconds = Math.floor(expiresAtMs / 1000);
+      const escrow = await createEscrow(client, {
+        sender: SENDER,
+        recipient: RECIPIENT,
+        amountStroops: ESCROW_MIN_AMOUNT_STROOPS,
+        expiresAt: expiresAtMs,
+      });
+
+      expect(escrow.deadline).toBe(expectedSeconds);
+      expect(escrow.expiresAt).toBe(expectedSeconds * 1000);
+      expect(mockInvoke).toHaveBeenCalledTimes(1);
+      const [, method, args] = mockInvoke.mock.calls[0];
+      expect(method).toBe('create_escrow');
+      expect(args[4]).toEqual(nativeToScVal(expectedSeconds, { type: 'u64' }));
     });
 
     it('rejects past deadline with INVALID_EXPIRATION error before contract invocation', async () => {
