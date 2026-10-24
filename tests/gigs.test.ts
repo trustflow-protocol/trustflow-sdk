@@ -306,6 +306,20 @@ describe('TrustFlowEscrowClient.getGigs', () => {
       expect(mockHttpGet).not.toHaveBeenCalled();
     });
 
+    it('rejects createdAfter > createdBefore (#648)', async () => {
+      const client = new TrustFlowEscrowClient({ ...BASE_CONTRACT_CONFIG, apiBaseUrl: API_BASE });
+
+      const res = await client.getGigs({
+        createdAfter: new Date('2025-01-01T00:00:00.000Z'),
+        createdBefore: new Date('2024-01-01T00:00:00.000Z'),
+      });
+      expect(res.ok).toBe(false);
+      if (!res.ok) {
+        expect(res.error).toMatch(/createdAfter cannot be after createdBefore/i);
+      }
+      expect(mockHttpGet).not.toHaveBeenCalled();
+    });
+
     it('rejects invalid sortBy and sortOrder', async () => {
       const client = new TrustFlowEscrowClient({ ...BASE_CONTRACT_CONFIG, apiBaseUrl: API_BASE });
 

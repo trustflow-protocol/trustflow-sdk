@@ -1,11 +1,26 @@
-import { ContractConfig } from '../types/contract';
-import { EscrowParams, EscrowState, SDKResult, GetGigsParams, GigsPage } from '../types/index';
-import { xlmToStroops } from '../utils/validation';
-import { createApiHttpClient, toApiErrorMessage } from '../utils/http';
-import type { ApiRetryConfig } from '../utils/http';
-import type { HttpInterceptors } from '../utils/interceptors';
-import { buildCreateEscrowArgs, buildClaimArgs, buildFundArgs } from '../contract/build';
-import { CreateEscrowSchema, ReleaseEscrowSchema, ClaimEscrowSchema, FundEscrowSchema } from '../schemas';
+import { ContractConfig } from "../types/contract";
+import {
+  EscrowParams,
+  EscrowState,
+  SDKResult,
+  GetGigsParams,
+  GigsPage,
+} from "../types/index";
+import { xlmToStroops } from "../utils/validation";
+import { createApiHttpClient, toApiErrorMessage } from "../utils/http";
+import type { ApiRetryConfig } from "../utils/http";
+import type { HttpInterceptors } from "../utils/interceptors";
+import {
+  buildCreateEscrowArgs,
+  buildClaimArgs,
+  buildFundArgs,
+} from "../contract/build";
+import {
+  CreateEscrowSchema,
+  ReleaseEscrowSchema,
+  ClaimEscrowSchema,
+  FundEscrowSchema,
+} from "../schemas";
 
 /** Per-call transport overrides for {@link TrustFlowEscrowClient.getGigs}. */
 export interface GetGigsOptions {
@@ -57,7 +72,7 @@ function parseFilterAmount(
   val: bigint | number | string,
   name: string,
 ): { ok: true; num: number; str: string } | { ok: false; error: string } {
-  if (typeof val === 'number') {
+  if (typeof val === "number") {
     if (isNaN(val) || !isFinite(val)) {
       return { ok: false, error: `${name} must be a valid number` };
     }
@@ -66,15 +81,15 @@ function parseFilterAmount(
     }
     return { ok: true, num: val, str: String(val) };
   }
-  if (typeof val === 'bigint') {
+  if (typeof val === "bigint") {
     if (val < 0n) {
       return { ok: false, error: `${name} cannot be negative` };
     }
     return { ok: true, num: Number(val), str: val.toString() };
   }
-  if (typeof val === 'string') {
+  if (typeof val === "string") {
     const trimmed = val.trim();
-    if (trimmed === '' || isNaN(Number(trimmed))) {
+    if (trimmed === "" || isNaN(Number(trimmed))) {
       return { ok: false, error: `${name} must be a valid numeric value` };
     }
     const num = Number(trimmed);
@@ -106,7 +121,10 @@ export class TrustFlowEscrowClient {
   private readonly retry?: ApiRetryConfig;
   private readonly interceptors?: HttpInterceptors;
 
-  constructor(config: ContractConfig, options: TrustFlowEscrowClientOptions = {}) {
+  constructor(
+    config: ContractConfig,
+    options: TrustFlowEscrowClientOptions = {},
+  ) {
     this.contractConfig = config;
     // Per-call options win, then the client-wide config value, so a single
     // `timeoutMs` on the shared config covers every backend call.
@@ -145,13 +163,13 @@ export class TrustFlowEscrowClient {
       sender: params.depositor,
       recipient: params.beneficiary,
       amount: amountStroops,
-      network: this.contractConfig.network ?? 'TESTNET',
+      network: this.contractConfig.network ?? "TESTNET",
     });
 
     if (!validation.success) {
       const fieldErrors = Object.entries(validation.error.flatten().fieldErrors)
-        .map(([field, msgs]) => `${field}: ${msgs?.join(', ')}`)
-        .join('; ');
+        .map(([field, msgs]) => `${field}: ${msgs?.join(", ")}`)
+        .join("; ");
       return { ok: false, error: `Validation failed: ${fieldErrors}` };
     }
 
@@ -164,7 +182,10 @@ export class TrustFlowEscrowClient {
         durationBlocks: params.deadlineBlocks,
       });
     } catch (e) {
-      return { ok: false, error: `Failed to encode escrow arguments: ${String(e)}` };
+      return {
+        ok: false,
+        error: `Failed to encode escrow arguments: ${String(e)}`,
+      };
     }
     // Encoded ScVal args are ready for the shared tx-pipeline once wired to a
     // live signer; this returns the prepared call metadata in the meantime.
@@ -192,15 +213,18 @@ export class TrustFlowEscrowClient {
    * if (result.ok) console.log('Claimed! tx:', result.data.txHash);
    * ```
    */
-  async claim(escrowId: string, claimantAddress: string): Promise<SDKResult<{ txHash: string }>> {
+  async claim(
+    escrowId: string,
+    claimantAddress: string,
+  ): Promise<SDKResult<{ txHash: string }>> {
     const validation = ClaimEscrowSchema.safeParse({
       escrowId,
       claimant: claimantAddress,
     });
     if (!validation.success) {
       const fieldErrors = Object.entries(validation.error.flatten().fieldErrors)
-        .map(([field, msgs]) => `${field}: ${msgs?.join(', ')}`)
-        .join('; ');
+        .map(([field, msgs]) => `${field}: ${msgs?.join(", ")}`)
+        .join("; ");
       return { ok: false, error: `Validation failed: ${fieldErrors}` };
     }
 
@@ -208,7 +232,10 @@ export class TrustFlowEscrowClient {
     try {
       args = buildClaimArgs(escrowId, claimantAddress);
     } catch (e) {
-      return { ok: false, error: `Failed to encode claim arguments: ${String(e)}` };
+      return {
+        ok: false,
+        error: `Failed to encode claim arguments: ${String(e)}`,
+      };
     }
     // Encoded ScVal args are ready for the shared tx-pipeline once wired to a
     // live signer; this returns the prepared call metadata in the meantime.
@@ -248,8 +275,8 @@ export class TrustFlowEscrowClient {
     });
     if (!validation.success) {
       const fieldErrors = Object.entries(validation.error.flatten().fieldErrors)
-        .map(([field, msgs]) => `${field}: ${msgs?.join(', ')}`)
-        .join('; ');
+        .map(([field, msgs]) => `${field}: ${msgs?.join(", ")}`)
+        .join("; ");
       return { ok: false, error: `Validation failed: ${fieldErrors}` };
     }
 
@@ -258,9 +285,17 @@ export class TrustFlowEscrowClient {
       // `tokenAddress` is a Soroban token contract (a "C..." strkey, e.g. the
       // USDC contract), not a "G..." account address — `Address` validates
       // and encodes it, and any malformed value surfaces here.
-      args = buildFundArgs(escrowId, funderAddress, amountStroops, tokenAddress);
+      args = buildFundArgs(
+        escrowId,
+        funderAddress,
+        amountStroops,
+        tokenAddress,
+      );
     } catch (e) {
-      return { ok: false, error: `Failed to encode fund arguments: ${String(e)}` };
+      return {
+        ok: false,
+        error: `Failed to encode fund arguments: ${String(e)}`,
+      };
     }
     // Encoded ScVal args are ready for the shared tx-pipeline once wired to a
     // live signer; this returns the prepared call metadata in the meantime.
@@ -289,12 +324,12 @@ export class TrustFlowEscrowClient {
     const validation = ReleaseEscrowSchema.safeParse({
       escrowId,
       caller: releaserAddress,
-      network: this.contractConfig.network ?? 'TESTNET',
+      network: this.contractConfig.network ?? "TESTNET",
     });
     if (!validation.success) {
       const fieldErrors = Object.entries(validation.error.flatten().fieldErrors)
-        .map(([field, msgs]) => `${field}: ${msgs?.join(', ')}`)
-        .join('; ');
+        .map(([field, msgs]) => `${field}: ${msgs?.join(", ")}`)
+        .join("; ");
       return { ok: false, error: `Validation failed: ${fieldErrors}` };
     }
     return { ok: true, data: { txHash: `release-${escrowId}-${Date.now()}` } };
@@ -308,7 +343,7 @@ export class TrustFlowEscrowClient {
    */
   async getEscrow(_escrowId: string): Promise<SDKResult<EscrowState | null>> {
     if (!isValidEscrowId(_escrowId)) {
-      return { ok: false, error: 'escrowId is required' };
+      return { ok: false, error: "escrowId is required" };
     }
     return { ok: true, data: null }; // Fetch from contract storage
   }
@@ -353,100 +388,131 @@ export class TrustFlowEscrowClient {
     options: GetGigsOptions = {},
   ): Promise<SDKResult<GigsPage>> {
     if (!this.contractConfig.apiBaseUrl) {
-      return { ok: false, error: 'apiBaseUrl is required to call getGigs' };
+      return { ok: false, error: "apiBaseUrl is required to call getGigs" };
     }
 
     const query = new URLSearchParams();
     if (params.cursor) {
-      query.set('cursor', params.cursor);
+      query.set("cursor", params.cursor);
     }
     if (params.limit !== undefined) {
       if (!Number.isInteger(params.limit) || params.limit <= 0) {
-        return { ok: false, error: 'limit must be a positive integer' };
+        return { ok: false, error: "limit must be a positive integer" };
       }
-      query.set('limit', String(Math.min(params.limit, 100)));
+      query.set("limit", String(Math.min(params.limit, 100)));
     }
     if (params.status) {
-      query.set('status', params.status.toLowerCase());
+      query.set("status", params.status.toLowerCase());
     }
     if (params.depositor) {
       if (!STELLAR_ADDRESS_RE.test(params.depositor)) {
-        return { ok: false, error: `Invalid depositor address: "${params.depositor}"` };
+        return {
+          ok: false,
+          error: `Invalid depositor address: "${params.depositor}"`,
+        };
       }
-      query.set('depositor', params.depositor);
+      query.set("depositor", params.depositor);
     }
     if (params.beneficiary) {
       if (!STELLAR_ADDRESS_RE.test(params.beneficiary)) {
-        return { ok: false, error: `Invalid beneficiary address: "${params.beneficiary}"` };
+        return {
+          ok: false,
+          error: `Invalid beneficiary address: "${params.beneficiary}"`,
+        };
       }
-      query.set('beneficiary', params.beneficiary);
+      query.set("beneficiary", params.beneficiary);
     }
     if (params.tokenAddress) {
       if (
         !STELLAR_ADDRESS_RE.test(params.tokenAddress) &&
         !CONTRACT_ID_RE.test(params.tokenAddress)
       ) {
-        return { ok: false, error: `Invalid tokenAddress: "${params.tokenAddress}"` };
+        return {
+          ok: false,
+          error: `Invalid tokenAddress: "${params.tokenAddress}"`,
+        };
       }
-      query.set('tokenAddress', params.tokenAddress);
+      query.set("tokenAddress", params.tokenAddress);
     }
+    let createdAfterStr: string | undefined;
+    let createdBeforeStr: string | undefined;
+
     if (params.createdAfter !== undefined) {
       const dateStr = parseFilterDate(params.createdAfter);
       if (!dateStr) {
-        return { ok: false, error: `Invalid createdAfter: "${String(params.createdAfter)}"` };
+        return {
+          ok: false,
+          error: `Invalid createdAfter: "${String(params.createdAfter)}"`,
+        };
       }
-      query.set('createdAfter', dateStr);
+      createdAfterStr = dateStr;
     }
     if (params.createdBefore !== undefined) {
       const dateStr = parseFilterDate(params.createdBefore);
       if (!dateStr) {
-        return { ok: false, error: `Invalid createdBefore: "${String(params.createdBefore)}"` };
+        return {
+          ok: false,
+          error: `Invalid createdBefore: "${String(params.createdBefore)}"`,
+        };
       }
-      query.set('createdBefore', dateStr);
+      createdBeforeStr = dateStr;
+    }
+    if (
+      createdAfterStr !== undefined &&
+      createdBeforeStr !== undefined &&
+      new Date(createdAfterStr).getTime() > new Date(createdBeforeStr).getTime()
+    ) {
+      return { ok: false, error: "createdAfter cannot be after createdBefore" };
+    }
+    if (createdAfterStr !== undefined) {
+      query.set("createdAfter", createdAfterStr);
+    }
+    if (createdBeforeStr !== undefined) {
+      query.set("createdBefore", createdBeforeStr);
     }
 
     let minNum: number | undefined;
     let maxNum: number | undefined;
 
     if (params.minAmount !== undefined) {
-      const parsed = parseFilterAmount(params.minAmount, 'minAmount');
+      const parsed = parseFilterAmount(params.minAmount, "minAmount");
       if (!parsed.ok) {
         return parsed;
       }
       minNum = parsed.num;
-      query.set('minAmount', parsed.str);
+      query.set("minAmount", parsed.str);
     }
     if (params.maxAmount !== undefined) {
-      const parsed = parseFilterAmount(params.maxAmount, 'maxAmount');
+      const parsed = parseFilterAmount(params.maxAmount, "maxAmount");
       if (!parsed.ok) {
         return parsed;
       }
       maxNum = parsed.num;
-      query.set('maxAmount', parsed.str);
+      query.set("maxAmount", parsed.str);
     }
     if (minNum !== undefined && maxNum !== undefined && minNum > maxNum) {
-      return { ok: false, error: 'minAmount cannot be greater than maxAmount' };
+      return { ok: false, error: "minAmount cannot be greater than maxAmount" };
     }
 
-    const ALLOWED_SORT_BY = ['created_at', 'amount', 'deadline', 'status'];
+    const ALLOWED_SORT_BY = ["created_at", "amount", "deadline", "status"];
     if (params.sortBy) {
       if (!ALLOWED_SORT_BY.includes(params.sortBy)) {
         return {
           ok: false,
-          error: `Invalid sortBy: "${params.sortBy}". Must be one of: ${ALLOWED_SORT_BY.join(', ')}`,
+          error: `Invalid sortBy: "${params.sortBy}". Must be one of: ${ALLOWED_SORT_BY.join(", ")}`,
         };
       }
-      query.set('sortBy', params.sortBy);
+      query.set("sortBy", params.sortBy);
     }
-    const ALLOWED_SORT_ORDER = ['asc', 'desc'];
+    const ALLOWED_SORT_ORDER = ["asc", "desc"];
     if (params.sortOrder) {
       if (!ALLOWED_SORT_ORDER.includes(params.sortOrder.toLowerCase())) {
         return {
           ok: false,
-          error: `Invalid sortOrder: "${params.sortOrder}". Must be one of: ${ALLOWED_SORT_ORDER.join(', ')}`,
+          error: `Invalid sortOrder: "${params.sortOrder}". Must be one of: ${ALLOWED_SORT_ORDER.join(", ")}`,
         };
       }
-      query.set('sortOrder', params.sortOrder.toLowerCase());
+      query.set("sortOrder", params.sortOrder.toLowerCase());
     }
 
     const http = createApiHttpClient({
@@ -456,11 +522,14 @@ export class TrustFlowEscrowClient {
       retry: options.retry ?? this.retry,
       // Per-call overrides win, then the constructor option, then the
       // contract-wide hooks.
-      interceptors: options.interceptors ?? this.interceptors ?? this.contractConfig.interceptors,
+      interceptors:
+        options.interceptors ??
+        this.interceptors ??
+        this.contractConfig.interceptors,
     });
 
     try {
-      const response = await http.get<GigsPage>('/gigs', {
+      const response = await http.get<GigsPage>("/gigs", {
         params: Object.fromEntries(query.entries()),
       });
       return { ok: true, data: response.data };
