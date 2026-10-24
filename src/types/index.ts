@@ -1,9 +1,9 @@
-export * from '../types';
-export * from './contract';
-export * from './events';
-export * from './juror';
-export * from './multisig';
-export * from './profile';
+export * from "../types";
+export * from "./contract";
+export * from "./events";
+export * from "./juror";
+export * from "./multisig";
+export * from "./profile";
 
 export type StellarAddress = string;
 export type EscrowId = string;
@@ -38,7 +38,7 @@ export interface EscrowParams {
 export interface EscrowState {
   id: EscrowId;
   params: EscrowParams;
-  status: 'pending' | 'active' | 'released' | 'disputed' | 'cancelled';
+  status: "pending" | "active" | "released" | "disputed" | "cancelled";
   contractEscrowId?: number;
   txHash?: TxHash;
   createdAt: number;
@@ -58,7 +58,7 @@ export interface Dispute {
   id: string;
   escrowId?: EscrowId;
   reason?: string;
-  status: 'open' | 'resolving' | 'resolved' | 'cancelled' | string;
+  status: "open" | "resolving" | "resolved" | "cancelled";
   evidence?: string;
   createdAt?: number | string;
   resolvedAt?: number | string;
@@ -77,8 +77,8 @@ export interface GetGigsParams {
   cursor?: string;
   /** Maximum records to return per page. Capped at 100 by the backend. Defaults to 20. */
   limit?: number;
-  /** Filter by escrow status (case-insensitive string or EscrowState status). */
-  status?: EscrowState['status'] | string;
+  /** Filter by escrow status. */
+  status?: EscrowState["status"];
   /** Filter by depositor Stellar address. */
   depositor?: StellarAddress;
   /** Filter by beneficiary Stellar address. */
@@ -94,9 +94,9 @@ export interface GetGigsParams {
   /** Filter by maximum amount. */
   maxAmount?: bigint | number | string;
   /** Field to sort results by. */
-  sortBy?: 'created_at' | 'amount' | 'deadline' | 'status';
+  sortBy?: "created_at" | "amount" | "deadline" | "status";
   /** Sort direction: "asc" or "desc". */
-  sortOrder?: 'asc' | 'desc';
+  sortOrder?: "asc" | "desc";
 }
 
 /**
