@@ -84,6 +84,28 @@ describe('AccountManager', () => {
     });
   });
 
+  it('removes the stale idByAddress entry when an existing id is re-registered under a new address (#600)', () => {
+    const accounts = new AccountManager();
+    accounts.add({ id: 'wallet-slot', address: ALICE });
+    expect(accounts.get(ALICE)?.id).toBe('wallet-slot');
+    expect(accounts.has(ALICE)).toBe(true);
+
+    accounts.add({ id: 'wallet-slot', address: BOB });
+
+    expect(accounts.size).toBe(1);
+    expect(accounts.get(ALICE)).toBeNull();
+    expect(accounts.has(ALICE)).toBe(false);
+    expect(() => accounts.require(ALICE)).toThrow(
+      expect.objectContaining({ code: 'ACCOUNT_NOT_FOUND' }),
+    );
+    expect(accounts.get(BOB)).toMatchObject({
+      id: 'wallet-slot',
+      address: BOB,
+    });
+    expect(accounts.has(BOB)).toBe(true);
+    expect(accounts.require(BOB).id).toBe('wallet-slot');
+  });
+
   it('merges data on update and lets a value be deleted', () => {
     const accounts = new AccountManager();
     accounts.add({ id: 'alice', address: ALICE, data: { a: 1, b: 2 } });
