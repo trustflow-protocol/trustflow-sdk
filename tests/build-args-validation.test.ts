@@ -2,6 +2,7 @@ import {
   buildCreateEscrowArgs,
   buildReleaseArgs,
   buildDisputeArgs,
+  buildVoteArgs,
 } from '../src/contract/build';
 import { TrustFlowError } from '../src/errors';
 import type { CreateEscrowParams } from '../src/types';
@@ -67,6 +68,27 @@ describe('build.ts address / id validation (#111)', () => {
     ])('rejects a malformed caller in the %s shape with a validation error', (_shape, reason) => {
       try {
         buildDisputeArgs('esc-1', 'not-a-stellar-address', reason);
+        throw new Error('should have thrown');
+      } catch (error) {
+        expect(error).toBeInstanceOf(TrustFlowError);
+        expect((error as TrustFlowError).code).toBe('VALIDATION_ERROR');
+      }
+    });
+  });
+
+  describe('buildVoteArgs (#636)', () => {
+    const validVote = { encrypted: false as const, choice: 'approve' as const };
+
+    it('accepts a valid disputeId + jurorAddress', () => {
+      expect(() => buildVoteArgs('dsp-1', VALID_ADDR, validVote)).not.toThrow();
+    });
+    it('rejects an empty or blank disputeId with TrustFlowError', () => {
+      expect(() => buildVoteArgs('', VALID_ADDR, validVote)).toThrow(TrustFlowError);
+      expect(() => buildVoteArgs('   ', VALID_ADDR, validVote)).toThrow(TrustFlowError);
+    });
+    it('rejects a malformed jurorAddress with a VALIDATION_ERROR TrustFlowError', () => {
+      try {
+        buildVoteArgs('dsp-1', 'not-a-stellar-address', validVote);
         throw new Error('should have thrown');
       } catch (error) {
         expect(error).toBeInstanceOf(TrustFlowError);

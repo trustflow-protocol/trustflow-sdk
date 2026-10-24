@@ -1,40 +1,46 @@
-import { Address, nativeToScVal } from '@stellar/stellar-sdk';
-import type { CreateEscrowParams } from '../types';
-import type { VotePayload } from '../types/juror';
-import { assertStellarAddress, isValidEscrowId } from '../utils/validation';
-import { TrustFlowError } from '../errors';
+import { Address, nativeToScVal } from "@stellar/stellar-sdk";
+import type { CreateEscrowParams } from "../types";
+import type { VotePayload } from "../types/juror";
+import { assertStellarAddress, isValidEscrowId } from "../utils/validation";
+import { TrustFlowError } from "../errors";
 
 function assertEscrowId(escrowId: string): void {
   if (!isValidEscrowId(escrowId)) {
-    throw TrustFlowError.validation('escrowId', `not a usable escrow id: "${escrowId}"`);
+    throw TrustFlowError.validation(
+      "escrowId",
+      `not a usable escrow id: "${escrowId}"`,
+    );
   }
 }
 
 export function buildCreateEscrowArgs(params: CreateEscrowParams): unknown[] {
   // Reject a malformed address here (#111) so callers get a
   // TrustFlowError.validation(...) instead of whatever `new Address()` throws.
-  assertStellarAddress(params.sender, 'sender');
-  assertStellarAddress(params.recipient, 'recipient');
+  assertStellarAddress(params.sender, "sender");
+  assertStellarAddress(params.recipient, "recipient");
   const args: unknown[] = [
     new Address(params.sender).toScVal(),
     new Address(params.recipient).toScVal(),
-    nativeToScVal(params.amountStroops, { type: 'i128' }),
-    nativeToScVal(params.durationBlocks ?? 0, { type: 'u32' }),
+    nativeToScVal(params.amountStroops, { type: "i128" }),
+    nativeToScVal(params.durationBlocks ?? 0, { type: "u32" }),
   ];
 
   if (params.milestones && params.milestones.length > 0) {
     const encodedMilestones = params.milestones.map((m) => {
       const entry: Record<string, unknown> = {};
       if (m.amount !== undefined) {
-        entry.amount = nativeToScVal(m.amount, { type: 'i128' });
+        entry.amount = nativeToScVal(m.amount, { type: "i128" });
       }
       const dl = m.deadline ?? m.expiration;
       if (dl !== undefined) {
-        const sec = typeof dl === 'number' ? dl : Math.floor(new Date(dl).getTime() / 1000);
-        entry.deadline = nativeToScVal(sec, { type: 'u64' });
+        const sec =
+          typeof dl === "number"
+            ? dl
+            : Math.floor(new Date(dl).getTime() / 1000);
+        entry.deadline = nativeToScVal(sec, { type: "u64" });
       }
       if (m.description !== undefined) {
-        entry.description = nativeToScVal(m.description, { type: 'string' });
+        entry.description = nativeToScVal(m.description, { type: "string" });
       }
       return nativeToScVal(entry);
     });
@@ -61,17 +67,23 @@ export function buildCancelArgs(
   assertEscrowId(escrowId);
   const elements = unreleasedMilestoneIndices.map((idx) => {
     if (!Number.isInteger(idx) || idx < 0) {
-      throw TrustFlowError.validation('milestoneIndex', 'Must be a non-negative integer');
+      throw TrustFlowError.validation(
+        "milestoneIndex",
+        "Must be a non-negative integer",
+      );
     }
-    return nativeToScVal(idx, { type: 'u32' });
+    return nativeToScVal(idx, { type: "u32" });
   });
-  return [nativeToScVal(escrowId, { type: 'string' }), nativeToScVal(elements)];
+  return [nativeToScVal(escrowId, { type: "string" }), nativeToScVal(elements)];
 }
 
 export function buildReleaseArgs(escrowId: string, caller: string): unknown[] {
   assertEscrowId(escrowId);
-  assertStellarAddress(caller, 'caller');
-  return [nativeToScVal(escrowId, { type: 'string' }), new Address(caller).toScVal()];
+  assertStellarAddress(caller, "caller");
+  return [
+    nativeToScVal(escrowId, { type: "string" }),
+    new Address(caller).toScVal(),
+  ];
 }
 
 /**
@@ -82,7 +94,10 @@ export function buildReleaseArgs(escrowId: string, caller: string): unknown[] {
  * contract has already cleared for withdrawal.
  */
 export function buildClaimArgs(escrowId: string, claimant: string): unknown[] {
-  return [nativeToScVal(escrowId, { type: 'string' }), new Address(claimant).toScVal()];
+  return [
+    nativeToScVal(escrowId, { type: "string" }),
+    new Address(claimant).toScVal(),
+  ];
 }
 
 /**
@@ -101,9 +116,9 @@ export function buildFundArgs(
   tokenAddress?: string,
 ): unknown[] {
   const args: unknown[] = [
-    nativeToScVal(escrowId, { type: 'string' }),
+    nativeToScVal(escrowId, { type: "string" }),
     new Address(funder).toScVal(),
-    nativeToScVal(amountStroops, { type: 'i128' }),
+    nativeToScVal(amountStroops, { type: "i128" }),
   ];
   if (tokenAddress) {
     args.push(new Address(tokenAddress).toScVal());
@@ -117,13 +132,13 @@ export function buildDisputeArgs(
   maybeReason?: string,
 ): unknown[] {
   assertEscrowId(escrowId);
-  assertStellarAddress(caller, 'caller');
+  assertStellarAddress(caller, "caller");
   const args: unknown[] = [
-    nativeToScVal(escrowId, { type: 'string' }),
+    nativeToScVal(escrowId, { type: "string" }),
     new Address(caller).toScVal(),
   ];
   if (maybeReason !== undefined) {
-    args.push(nativeToScVal(maybeReason, { type: 'string' }));
+    args.push(nativeToScVal(maybeReason, { type: "string" }));
   }
   return args;
 }
@@ -140,14 +155,16 @@ export function buildVoteArgs(
   jurorAddress: string,
   vote: VotePayload,
 ): unknown[] {
+  assertEscrowId(disputeId);
+  assertStellarAddress(jurorAddress, "jurorAddress");
   const voteScVal = vote.encrypted
-    ? nativeToScVal(Buffer.from(vote.ciphertext, 'base64'), { type: 'bytes' })
-    : nativeToScVal(vote.choice, { type: 'symbol' });
+    ? nativeToScVal(Buffer.from(vote.ciphertext, "base64"), { type: "bytes" })
+    : nativeToScVal(vote.choice, { type: "symbol" });
 
   return [
-    nativeToScVal(disputeId, { type: 'string' }),
+    nativeToScVal(disputeId, { type: "string" }),
     new Address(jurorAddress).toScVal(),
-    nativeToScVal(vote.encrypted, { type: 'bool' }),
+    nativeToScVal(vote.encrypted, { type: "bool" }),
     voteScVal,
   ];
 }
@@ -175,44 +192,50 @@ export function buildRevealArgs(
   salt: Uint8Array | string,
 ): unknown[] {
   assertEscrowId(disputeId);
-  assertStellarAddress(jurorAddress, 'jurorAddress');
+  assertStellarAddress(jurorAddress, "jurorAddress");
 
-  if ((voteForDepositor as unknown) === 'abstain') {
+  if ((voteForDepositor as unknown) === "abstain") {
     throw new TrustFlowError(
       "Commit-reveal voting does not support 'abstain'. Callers needing 'abstain' must cast a plaintext vote instead.",
-      'VALIDATION_ERROR',
+      "VALIDATION_ERROR",
     );
   }
 
-  if (typeof voteForDepositor !== 'boolean') {
-    throw new TrustFlowError('voteForDepositor must be a boolean', 'VALIDATION_ERROR');
+  if (typeof voteForDepositor !== "boolean") {
+    throw new TrustFlowError(
+      "voteForDepositor must be a boolean",
+      "VALIDATION_ERROR",
+    );
   }
 
   let saltBytes: Buffer;
-  if (typeof salt === 'string') {
+  if (typeof salt === "string") {
     if (salt.length !== 64 || !/^[0-9a-fA-F]+$/.test(salt)) {
       throw new TrustFlowError(
-        'Salt hex string must be exactly 64 characters (32 bytes)',
-        'VALIDATION_ERROR',
+        "Salt hex string must be exactly 64 characters (32 bytes)",
+        "VALIDATION_ERROR",
       );
     }
-    saltBytes = Buffer.from(salt, 'hex');
+    saltBytes = Buffer.from(salt, "hex");
   } else if (salt instanceof Uint8Array) {
     if (salt.length !== 32) {
-      throw new TrustFlowError('Salt must be exactly 32 bytes', 'VALIDATION_ERROR');
+      throw new TrustFlowError(
+        "Salt must be exactly 32 bytes",
+        "VALIDATION_ERROR",
+      );
     }
     saltBytes = Buffer.from(salt);
   } else {
     throw new TrustFlowError(
-      'Salt must be a 32-byte Uint8Array or 64-character hex string',
-      'VALIDATION_ERROR',
+      "Salt must be a 32-byte Uint8Array or 64-character hex string",
+      "VALIDATION_ERROR",
     );
   }
 
   return [
-    nativeToScVal(disputeId, { type: 'string' }),
+    nativeToScVal(disputeId, { type: "string" }),
     new Address(jurorAddress).toScVal(),
-    nativeToScVal(voteForDepositor, { type: 'bool' }),
-    nativeToScVal(saltBytes, { type: 'bytes' }),
+    nativeToScVal(voteForDepositor, { type: "bool" }),
+    nativeToScVal(saltBytes, { type: "bytes" }),
   ];
 }
