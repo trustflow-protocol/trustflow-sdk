@@ -1,15 +1,29 @@
-import { rpc, Contract, TransactionBuilder, BASE_FEE } from '@stellar/stellar-sdk';
-import type { TrustFlowClient } from '../client';
-import type { ContractCallResult } from '../types/contract';
-import { TrustFlowError } from '../errors';
-import type { AccountOptions } from '../accounts/types';
-import { withTransientRetry } from '../utils/node-retry';
-import { padResourceFee } from '../utils/resource-fee';
-import { describeError, logger } from '../utils/logger';
-import type { ReadContractStateOptions } from './read';
-import { simulateTransaction } from './simulation';
+import {
+  rpc,
+  Contract,
+  TransactionBuilder,
+  BASE_FEE,
+} from "@stellar/stellar-sdk";
+import type { TrustFlowClient } from "../client";
+import type { ContractCallResult } from "../types/contract";
+import { TrustFlowError } from "../errors";
+import type { AccountOptions } from "../accounts/types";
+import { withTransientRetry } from "../utils/node-retry";
+import { padResourceFee } from "../utils/resource-fee";
+import { describeError, logger } from "../utils/logger";
+import type { ReadContractStateOptions } from "./read";
+import { simulateTransaction } from "./simulation";
 
 export type SignAndSubmitFn = (xdr: string) => Promise<string>;
+
+function estimateGasUsed(simulation: {
+  cost?: { cpuInsns?: string };
+  minResourceFee?: string;
+}): number {
+  return (
+    Number(simulation.cost?.cpuInsns) || Number(simulation.minResourceFee) || 0
+  );
+}
 
 /** Per-call account and retry overrides for {@link invokeContract}. */
 export interface InvokeContractOptions extends AccountOptions {
@@ -18,7 +32,7 @@ export interface InvokeContractOptions extends AccountOptions {
    * total tries (so `attempts: 1` disables retries), and `maxDelayMs` caps each
    * delay. See {@link import('../utils/retry').cappedExponentialBackoff}.
    */
-  retry?: ReadContractStateOptions['retry'];
+  retry?: ReadContractStateOptions["retry"];
   /**
    * Per-attempt timeout in milliseconds for the `getAccount` and
    * `simulateTransaction` calls, overriding the client-wide
@@ -81,7 +95,7 @@ export async function invokeContract(
   const server = client.getSorobanServer();
   const contract = new Contract(client.contractId);
 
-  logger.debug('Invoking contract method', {
+  logger.debug("Invoking contract method", {
     method,
     caller,
     contractId: client.contractId,
@@ -94,7 +108,7 @@ export async function invokeContract(
       () => server.getAccount(caller),
       { ...options.retry, timeoutMs: options.timeoutMs ?? client.timeoutMs },
       client.retryConfig,
-      'rpc.getAccount',
+      "rpc.getAccount",
     );
     const operation = contract.call(method, ...(args as any[]));
 
@@ -114,17 +128,23 @@ export async function invokeContract(
     );
 
     if (!simulation.success) {
-      logger.warn('Contract simulation failed', { method, error: simulation.error });
+      logger.warn("Contract simulation failed", {
+        method,
+        error: simulation.error,
+      });
       return {
         success: false,
         error: simulation.error,
       };
     }
 
-    logger.debug('Contract simulation successful', { method, gasUsed: simulation.cost });
+    logger.debug("Contract simulation successful", {
+      method,
+      gasUsed: simulation.cost,
+    });
 
     if (!signAndSubmit) {
-      const gasUsed = Number(simulation.cost?.cpuInsns || simulation.minResourceFee || 0);
+      const gasUsed = estimateGasUsed(simulation);
       return {
         success: true,
         returnValue: simulation.returnValue,
@@ -132,7 +152,10 @@ export async function invokeContract(
       };
     }
 
-    const paddedFee = padResourceFee(simulation.minResourceFee, options.resourceFeeMultiplier);
+    const paddedFee = padResourceFee(
+      simulation.minResourceFee,
+      options.resourceFeeMultiplier,
+    );
     // Same ordering as TransactionPipeline.prepare(): the padded fee must land
     // in the Soroban data itself, not only in the `minResourceFee` argument.
     simulation.transactionData?.setResourceFee(paddedFee);
@@ -145,11 +168,14 @@ export async function invokeContract(
       } as rpc.Api.SimulateTransactionSuccessResponse)
       .build();
     const xdr = prepared.toXDR();
-    logger.debug('Signing and submitting transaction', { method, xdrLength: xdr.length });
+    logger.debug("Signing and submitting transaction", {
+      method,
+      xdrLength: xdr.length,
+    });
     const txHash = await signAndSubmit(xdr);
 
-    logger.info('Contract call submitted', { method, txHash });
-    const gasUsed = Number(simulation.cost?.cpuInsns || simulation.minResourceFee || 0);
+    logger.info("Contract call submitted", { method, txHash });
+    const gasUsed = estimateGasUsed(simulation);
     return {
       success: true,
       txHash,
@@ -157,7 +183,11 @@ export async function invokeContract(
       gasUsed,
     };
   } catch (e) {
-    logger.error('Contract invocation failed', { method, caller, error: describeError(e) });
+    logger.error("Contract invocation failed", {
+      method,
+      caller,
+      error: describeError(e),
+    });
     const message = e instanceof Error ? e.message : String(e);
     const code = e instanceof TrustFlowError ? e.code : undefined;
     return { success: false, error: message, code };

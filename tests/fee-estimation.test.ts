@@ -1,6 +1,6 @@
 import { TransactionPipeline } from '../src/tx-pipeline/pipeline';
 import { TrustFlowClient } from '../src/client';
-import { BASE_FEE, Operation, TransactionBuilder, rpc } from '@stellar/stellar-sdk';
+import { Account, SorobanDataBuilder, xdr } from '@stellar/stellar-sdk';
 import { simulateContractCall } from '../src/contract/simulate';
 import { invokeContract } from '../src/contract/invoke';
 
@@ -113,6 +113,64 @@ describe('Fee Estimation & Cost Propagation (#231)', () => {
       const result = await invokeContract(client, 'testMethod', [], sourceAccount);
       expect(result.success).toBe(true);
       expect(result.gasUsed).toBe(75000);
+    });
+
+    it('falls back to minResourceFee when cost is omitted or cost.cpuInsns is "0" (#646)', async () => {
+      const mockSorobanServer = {
+        getAccount: jest.fn().mockResolvedValue({
+          accountId: () => sourceAccount,
+          sequenceNumber: () => '1',
+          incrementSequenceNumber: () => {},
+        }),
+        simulateTransaction: jest
+          .fn()
+          .mockResolvedValueOnce({
+            minResourceFee: '25000',
+            result: { retval: null },
+          })
+          .mockResolvedValueOnce({
+            minResourceFee: '31000',
+            cost: { cpuInsns: '0', memBytes: '0' },
+            result: { retval: null },
+          }),
+      };
+      jest.spyOn(client, 'getSorobanServer').mockReturnValue(mockSorobanServer as any);
+
+      const omittedCostResult = await invokeContract(client, 'testMethod', [], sourceAccount);
+      expect(omittedCostResult.success).toBe(true);
+      expect(omittedCostResult.gasUsed).toBe(25000);
+
+      const zeroCpuResult = await invokeContract(client, 'testMethod', [], sourceAccount);
+      expect(zeroCpuResult.success).toBe(true);
+      expect(zeroCpuResult.gasUsed).toBe(31000);
+    });
+
+    it('falls back to minResourceFee on the signAndSubmit path when cost.cpuInsns is "0" (#646)', async () => {
+      const mockSorobanServer = {
+        getAccount: jest.fn().mockResolvedValue(new Account(sourceAccount, '1')),
+        simulateTransaction: jest.fn().mockResolvedValue({
+          _parsed: true,
+          id: 'simulation-1',
+          latestLedger: 1,
+          events: [],
+          minResourceFee: '25000',
+          cost: { cpuInsns: '0', memBytes: '0' },
+          transactionData: new SorobanDataBuilder(),
+          result: { auth: [], retval: xdr.ScVal.scvVoid() },
+        }),
+      };
+      jest.spyOn(client, 'getSorobanServer').mockReturnValue(mockSorobanServer as any);
+
+      const result = await invokeContract(
+        client,
+        'testMethod',
+        [],
+        sourceAccount,
+        async () => 'tx-hash-123',
+      );
+      expect(result.success).toBe(true);
+      expect(result.txHash).toBe('tx-hash-123');
+      expect(result.gasUsed).toBe(25000);
     });
   });
 });
