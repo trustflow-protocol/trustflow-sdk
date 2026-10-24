@@ -1,7 +1,16 @@
+import { TransactionBuilder } from '@stellar/stellar-sdk';
 import type { WalletAdapter } from './types';
 import { getFreighter } from './freighter';
 import { connectWallet, disconnectWallet } from './connect';
 import { TrustFlowError } from '../errors';
+import { NETWORK_CONFIGS, type StellarNetwork } from '../stellar/network';
+import { verifySignedEnvelope, type SignableTransaction } from '../stellar/signing';
+
+function resolveNetworkPassphrase(network: string): string {
+  const upper = network.toUpperCase();
+  const key = (upper === 'PUBLIC' ? 'MAINNET' : upper) as StellarNetwork;
+  return NETWORK_CONFIGS[key]?.passphrase ?? network;
+}
 
 /**
  * Wraps the injected Freighter extension in the {@link WalletAdapter} interface (#435).
@@ -36,8 +45,16 @@ export function createFreighterAdapter(): WalletAdapter {
     isAvailable: async () => getFreighter() !== null,
     connect: () => connectWallet('freighter'),
     sign: async (xdr, network) => {
-      const { signedXDR } = await requireFreighter().signTransaction(xdr, { network });
-      return signedXDR;
+      const freighter = requireFreighter();
+      const passphrase = resolveNetworkPassphrase(network);
+      let transaction: SignableTransaction;
+      try {
+        transaction = TransactionBuilder.fromXDR(xdr, passphrase);
+      } catch (e) {
+        throw TrustFlowError.signingFailed('invalid transaction envelope', e);
+      }
+      const { signedXDR } = await freighter.signTransaction(xdr, { network });
+      return verifySignedEnvelope(transaction, signedXDR).xdr;
     },
     signMessage: async (message) => requireFreighter().signMessage(message),
     disconnect: () => disconnectWallet(),
