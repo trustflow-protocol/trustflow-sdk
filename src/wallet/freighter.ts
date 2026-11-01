@@ -1,3 +1,5 @@
+import { TrustFlowError } from '../errors';
+
 export interface FreighterWallet {
   isAvailable(): boolean;
   getPublicKey(): Promise<string>;
@@ -14,10 +16,10 @@ export interface FreighterWallet {
 
 interface FreighterWindow {
   freighter?: {
-    getPublicKey(): Promise<string>;
-    signTransaction(xdr: string, opts: { network: string }): Promise<{ signedXDR: string }>;
-    getNetwork(): Promise<string>;
-    signMessage(message: string): Promise<string>;
+    getPublicKey?(): Promise<string>;
+    signTransaction?(xdr: string, opts: { network: string }): Promise<{ signedXDR: string }>;
+    getNetwork?(): Promise<string>;
+    signMessage?(message: string): Promise<string>;
   };
 }
 
@@ -33,10 +35,37 @@ export function getFreighter(): FreighterWallet | null {
   }
   return {
     isAvailable: () => true,
-    getPublicKey: () => w.getPublicKey(),
-    signTransaction: (xdr, opts) => w.signTransaction(xdr, opts),
-    getNetwork: () => w.getNetwork(),
-    signMessage: (message) => w.signMessage(message),
+    getPublicKey: () => {
+      const fn = w.getPublicKey;
+      // An older/incompatible Freighter extension may not expose this
+      // method; feature-detect it rather than letting a raw TypeError
+      // surface from calling it directly.
+      if (typeof fn !== 'function') {
+        throw TrustFlowError.unsupportedWalletVersion('Freighter', 'getPublicKey');
+      }
+      return fn();
+    },
+    signTransaction: (xdr, opts) => {
+      const fn = w.signTransaction;
+      if (typeof fn !== 'function') {
+        throw TrustFlowError.unsupportedWalletVersion('Freighter', 'signTransaction');
+      }
+      return fn(xdr, opts);
+    },
+    getNetwork: () => {
+      const fn = w.getNetwork;
+      if (typeof fn !== 'function') {
+        throw TrustFlowError.unsupportedWalletVersion('Freighter', 'getNetwork');
+      }
+      return fn();
+    },
+    signMessage: (message) => {
+      const fn = w.signMessage;
+      if (typeof fn !== 'function') {
+        throw TrustFlowError.unsupportedWalletVersion('Freighter', 'signMessage');
+      }
+      return fn(message);
+    },
   };
 }
 

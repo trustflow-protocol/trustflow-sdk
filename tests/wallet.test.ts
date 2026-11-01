@@ -148,6 +148,23 @@ describe('wallet module', () => {
 
       await expect(connectWallet('albedo')).resolves.toMatchObject({ network: 'TESTNET' });
     });
+
+    it('throws a clear, actionable error instead of a raw TypeError when an installed freighter lacks a required method (#740)', async () => {
+      // Simulates an older/incompatible Freighter extension whose exposed API
+      // is missing getPublicKey (e.g. a renamed method in a newer SDK shape).
+      const incompatibleFreighter = {
+        getNetwork: jest.fn().mockResolvedValue('TESTNET'),
+        signTransaction: jest.fn(),
+        signMessage: jest.fn(),
+      };
+      global.window = { freighter: incompatibleFreighter } as any;
+
+      await expect(connectWallet('freighter')).rejects.not.toThrow(/is not a function/);
+      await expect(connectWallet('freighter')).rejects.toMatchObject({
+        code: 'UNSUPPORTED_WALLET_VERSION',
+        message: expect.stringContaining('upgrade'),
+      });
+    });
   });
 
   describe('disconnectWallet', () => {
