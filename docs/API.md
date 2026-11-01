@@ -402,13 +402,14 @@ const uri = generateSep7Uri(preparedXdr, {
   - `walletType` (optional): One of 'freighter', 'albedo', 'xbull', 'manual'; defaults to 'freighter'
   - Returns a `WalletConnection` (plain data object with type, publicKey, and network)
   - **Throws** `TrustFlowError` with code 'UNAUTHORIZED' if wallet not supported or not installed
+  - **Throws** `TrustFlowError` with code 'UNSUPPORTED_WALLET_VERSION' if Freighter is installed but its API is missing a required method (e.g. an outdated extension)
   
 - `disconnectWallet()` — Disconnects from the currently connected wallet
   - Most Stellar wallets don't expose a disconnect API, so this is a no-op in practice
   
 - `getFreighter()` — Gets the Freighter wallet adapter (the low-level API)
   - Throws `TrustFlowError` if Freighter is not installed
-  - Returns the Freighter instance for direct wallet API access
+  - Returns the Freighter instance for direct wallet API access; calling a method the installed extension doesn't support throws `TrustFlowError` with code 'UNSUPPORTED_WALLET_VERSION'
   
 - `isFreighterInstalled()` — Checks whether Freighter browser extension is installed
   - Returns `Promise<boolean>` (async; must be awaited)
@@ -891,6 +892,7 @@ The SDK uses `TrustFlowErrorCode` to classify all failure modes. Each error inst
 | `UNSUPPORTED_ENVIRONMENT` | Fatal | Environment detector | Missing WebCrypto or Node.js crypto primitives in runtime | Upgrade Node.js (>=20) or include WebCrypto polyfills |
 | `VERSION_MISMATCH` | Fatal | Version negotiator | Client SDK version is incompatible with backend API version | Update `@trustflow/sdk` or align backend deployment version |
 | `USER_REJECTED` | Actionable | Wallet connectors (Freighter, Albedo, xBull) | User dismissed wallet popup or declined connection/signing | Gracefully prompt user to re-open wallet when ready |
+| `UNSUPPORTED_WALLET_VERSION` | Actionable | Freighter connector | Installed extension's API is missing a method the SDK requires | Prompt user to update their wallet extension to the latest version |
 | `STALE_CHALLENGE` | Transient / Actionable | Challenge validator | Auth challenge nonce expired before signature verification | Request a fresh challenge and verify immediately |
 
 ---
@@ -962,6 +964,7 @@ Create pre-formatted errors:
 - `TrustFlowError.unauthorized(action: string)` — 'UNAUTHORIZED' error
 - `TrustFlowError.validation(field: string, message: string, issues?: any[])` — 'VALIDATION_ERROR' with field name
 - `TrustFlowError.userRejected(detail?: string, cause?: unknown)` — 'USER_REJECTED' error
+- `TrustFlowError.unsupportedWalletVersion(walletName: string, missingMethod: string)` — 'UNSUPPORTED_WALLET_VERSION' error with an upgrade hint
 - `TrustFlowError.versionMismatch(clientVersion: string, serverVersion: string, details?: string)` — 'VERSION_MISMATCH' error
 - `TrustFlowError.timedOut(timeoutMs: number, context?: string)` — 'TIMEOUT' error with context
 - `TrustFlowError.queueTimeout(timeoutMs: number)` — 'TIMEOUT' for transaction serialization queue

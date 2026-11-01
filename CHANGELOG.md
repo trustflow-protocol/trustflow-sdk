@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Feature-detect Freighter API surface before use (#740)
+
+- Issue #740: `getFreighter()` now checks that each required method (`getPublicKey`, `signTransaction`, `getNetwork`, `signMessage`) exists on `window.freighter` before calling it, throwing `TrustFlowError` with the new `UNSUPPORTED_WALLET_VERSION` code and an upgrade hint instead of letting a raw `TypeError` surface from an older/incompatible extension.
+
 ### Single CID validator (#562)
 
 - Issue #562: `isValidCID`, `isValidCIDv0`, `isValidCIDv1`, `assertValidCID` and `getCIDVersion` in `src/utils/validation.ts` now delegate to the decode-based validator in `src/storage/cid.ts`, so `isValidCid`/`isValidCID` always agree. Previously the regex versions rejected valid CIDv1 strings with multicodecs other than dag-pb, dag-cbor, raw and dag-json.

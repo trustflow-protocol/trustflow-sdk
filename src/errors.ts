@@ -29,6 +29,7 @@ export type TrustFlowErrorCode =
   | 'UNSUPPORTED_ENVIRONMENT'
   | 'VERSION_MISMATCH'
   | 'USER_REJECTED'
+  | 'UNSUPPORTED_WALLET_VERSION'
   | 'STALE_CHALLENGE'
   | 'STORAGE_GATEWAY_ERROR'
   | 'INVALID_EXPIRATION'
@@ -78,6 +79,17 @@ export class TrustFlowError extends Error {
 
   static userRejected(detail = 'User rejected wallet connection', cause?: unknown): TrustFlowError {
     return new TrustFlowError(detail, 'USER_REJECTED', cause);
+  }
+
+  /**
+   * The injected wallet extension is present but its API is missing a method
+   * the SDK requires, as happens with an outdated extension version.
+   */
+  static unsupportedWalletVersion(walletName: string, missingMethod: string): TrustFlowError {
+    return new TrustFlowError(
+      `${walletName} extension does not support "${missingMethod}". Please upgrade to the latest version of ${walletName}.`,
+      'UNSUPPORTED_WALLET_VERSION',
+    );
   }
 
   static notFound(resource: string): TrustFlowError {
