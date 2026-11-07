@@ -19,7 +19,7 @@
  */
 import { z } from 'zod';
 import { TrustFlowError } from './errors';
-import { STELLAR_ADDRESS_RE, CONTRACT_ID_RE } from './utils/validation';
+import { STELLAR_ADDRESS_RE, CONTRACT_ID_RE, isValidXLMAmount } from './utils/validation';
 import { isValidCid } from './storage/cid';
 
 // ── Primitives ────────────────────────────────────────────────────────────────
@@ -46,6 +46,27 @@ export const CidSchema = z.string().refine(isValidCid, {
 });
 
 // ── Escrow ────────────────────────────────────────────────────────────────────
+
+/**
+ * Validates a decimal XLM amount string (up to 7 decimal places, strictly no leading or trailing whitespace) (#808).
+ */
+export const XlmAmountSchema = z
+  .string()
+  .refine((val) => val === val.trim() && isValidXLMAmount(val), {
+    message:
+      'Invalid XLM amount string (must be a positive decimal up to 7 places with no leading or trailing whitespace)',
+  });
+
+/** Validates `EscrowParams` with a strict decimal string `amountXLM` / `amount` (#808). */
+export const EscrowParamsSchema = z.object({
+  depositor: StellarAddressSchema,
+  beneficiary: StellarAddressSchema,
+  arbitrator: StellarAddressSchema.optional(),
+  amount: XlmAmountSchema,
+  token: ContractIdSchema.optional(),
+  deadline: z.number().int().positive().optional(),
+  description: z.string().max(256).optional(),
+});
 
 /** Validates the input to `escrow.create()`. */
 export const CreateEscrowSchema = z.object({
@@ -204,6 +225,7 @@ export const ClientConfigSchema = z.object({
 
 // ── Inferred types ────────────────────────────────────────────────────────────
 
+export type EscrowParamsInput = z.infer<typeof EscrowParamsSchema>;
 export type CreateEscrowInput = z.infer<typeof CreateEscrowSchema>;
 export type ReleaseEscrowInput = z.infer<typeof ReleaseEscrowSchema>;
 export type DisputeEscrowInput = z.infer<typeof DisputeEscrowSchema>;

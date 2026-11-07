@@ -48,6 +48,8 @@ export {
   ContractIdSchema,
   StroopsSchema,
   NetworkSchema,
+  XlmAmountSchema,
+  EscrowParamsSchema,
   CreateEscrowSchema,
   ReleaseEscrowSchema,
   DisputeEscrowSchema,
@@ -58,4 +60,4 @@ export {
   CidSchema,
   parseRpcResponse,
 } from './schemas';
-export type { CreateEscrowInput, ReleaseEscrowInput, DisputeEscrowInput, ClaimEscrowInput, FundEscrowInput, VoteInput } from './schemas';
+export type { EscrowParamsInput, CreateEscrowInput, ReleaseEscrowInput, DisputeEscrowInput, ClaimEscrowInput, FundEscrowInput, VoteInput } from './schemas';

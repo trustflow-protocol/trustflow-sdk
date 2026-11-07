@@ -1094,3 +1094,8 @@ See [docs/TESTING.md](./TESTING.md) for full usage examples.
 - `minAmount` / `maxAmount` — Filter by amount bounds
 - `sortBy` — Sort field (`created_at`, `amount`, `deadline`, `status`)
 - `sortOrder` — Sort direction (`asc`, `desc`)
+
+## EscrowParamsSchema & XlmAmountSchema
+
+- `XlmAmountSchema` — Zod schema validating positive decimal XLM strings (up to 7 decimals) and rejecting leading/trailing whitespace.
+- `EscrowParamsSchema` (`EscrowParamsInput`) — Validates escrow parameters (`depositor`, `beneficiary`, `amount`, optional `arbitrator`, `token`, `deadline`, `description`).

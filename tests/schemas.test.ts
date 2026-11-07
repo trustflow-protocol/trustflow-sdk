@@ -3,6 +3,8 @@ import {
   ContractIdSchema,
   StroopsSchema,
   NetworkSchema,
+  XlmAmountSchema,
+  EscrowParamsSchema,
   CreateEscrowSchema,
   ReleaseEscrowSchema,
   DisputeEscrowSchema,
@@ -63,6 +65,32 @@ describe('exported Zod schemas', () => {
       expect(NetworkSchema.safeParse('DEVNET').success).toBe(false);
       expect(NetworkSchema.safeParse('UNKNOWN_NET').success).toBe(false);
     });
+  });
+
+  describe('EscrowParamsSchema & XlmAmountSchema (#808)', () => {
+    it('accepts clean decimal amount strings', () => {
+      expect(
+        EscrowParamsSchema.safeParse({
+          depositor: ADDR_A,
+          beneficiary: ADDR_B,
+          amount: '50.25',
+        }).success,
+      ).toBe(true);
+    });
+
+    it.each([' 50 ', ' 50', '50 ', '\t10\n', '', '0', '-5'])(
+      'rejects whitespace-padded or invalid amount %j',
+      (badAmount) => {
+        expect(XlmAmountSchema.safeParse(badAmount).success).toBe(false);
+        expect(
+          EscrowParamsSchema.safeParse({
+            depositor: ADDR_A,
+            beneficiary: ADDR_B,
+            amount: badAmount,
+          }).success,
+        ).toBe(false);
+      },
+    );
   });
 
   describe('CreateEscrowSchema', () => {
