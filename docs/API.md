@@ -1094,3 +1094,7 @@ See [docs/TESTING.md](./TESTING.md) for full usage examples.
 - `minAmount` / `maxAmount` — Filter by amount bounds
 - `sortBy` — Sort field (`created_at`, `amount`, `deadline`, `status`)
 - `sortOrder` — Sort direction (`asc`, `desc`)
+
+## Testnet Friendbot Helper (`fundTestnetAccount`)
+
+- `fundTestnetAccount(address, options?: FundTestnetAccountOptions): Promise<FundTestnetAccountResult>` — Idempotently funds a Stellar testnet account using `DEFAULT_FRIENDBOT_URL` (`https://friendbot.stellar.org`). If the account already exists (`createAccountAlreadyExist` / `op_already_exists`), resolves with `{ address, alreadyFunded: true }` instead of throwing.

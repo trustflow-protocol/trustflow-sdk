@@ -2,6 +2,7 @@ import { TrustFlowError } from '../errors';
 import { withTransientRetry } from '../utils/node-retry';
 import type { ApiRetryConfig } from '../utils/http';
 import { fetchWithTimeout } from '../utils/timeout';
+import { assertStellarAddress } from '../utils/validation';
 import { getNetworkConfig, StellarNetwork } from './network';
 
 export interface AccountInfo {
@@ -135,5 +136,125 @@ export async function fetchAccountInfo(
       'CONNECTION_ERROR',
       e,
     );
+  }
+}
+
+/** Default Stellar Testnet Friendbot URL. */
+export const DEFAULT_FRIENDBOT_URL = 'https://friendbot.stellar.org';
+
+/** Options for {@link fundTestnetAccount}. */
+export interface FundTestnetAccountOptions {
+  /** Override the Friendbot endpoint URL (defaults to `https://friendbot.stellar.org`). */
+  friendbotUrl?: string;
+  /** Per-request timeout in milliseconds (defaults to the SDK-wide 10s). */
+  timeoutMs?: number;
+  /** Optional retry budget for transient (`429`/`5xx`/network) failures. */
+  retry?: ApiRetryConfig;
+}
+
+/** Outcome returned by {@link fundTestnetAccount}. */
+export interface FundTestnetAccountResult {
+  /** The funded Stellar `G...` public key. */
+  address: string;
+  /** `true` when Friendbot reported that the account already exists (`createAccountAlreadyExist`). */
+  alreadyFunded: boolean;
+  /** Transaction hash when newly funded by Friendbot. */
+  hash?: string;
+}
+
+function isAlreadyFundedPayload(rawText: string): boolean {
+  if (!rawText) return false;
+  if (
+    rawText.includes('createAccountAlreadyExist') ||
+    rawText.includes('op_already_exists') ||
+    rawText.toLowerCase().includes('account already funded') ||
+    rawText.toLowerCase().includes('already exists')
+  ) {
+    return true;
+  }
+  try {
+    const parsed = JSON.parse(rawText) as {
+      detail?: string;
+      extras?: {
+        result_codes?: { transaction?: string; operations?: string[] };
+      };
+    };
+    const ops = parsed?.extras?.result_codes?.operations ?? [];
+    if (
+      ops.includes('op_already_exists') ||
+      ops.includes('createAccountAlreadyExist') ||
+      (typeof parsed?.detail === 'string' &&
+        parsed.detail.includes('createAccountAlreadyExist'))
+    ) {
+      return true;
+    }
+  } catch {
+    // Non-JSON error body; substring checks above already ran.
+  }
+  return false;
+}
+
+/**
+ * Ensures a Stellar testnet account is funded via Friendbot idempotently (#771).
+ *
+ * When Friendbot responds with `createAccountAlreadyExist` / `op_already_exists`
+ * (HTTP 400 because the account has already been created and funded), this helper
+ * resolves cleanly with `{ address, alreadyFunded: true }` instead of throwing.
+ *
+ * @param address - Stellar `G...` public key to fund
+ * @param options - Optional Friendbot URL, timeout, and retry configuration
+ * @returns Funding result indicating whether the account was newly funded or already existed
+ */
+export async function fundTestnetAccount(
+  address: string,
+  options: FundTestnetAccountOptions = {},
+): Promise<FundTestnetAccountResult> {
+  assertStellarAddress(address, 'address');
+  const friendbotUrl = options.friendbotUrl ?? DEFAULT_FRIENDBOT_URL;
+  const url = `${friendbotUrl}?addr=${encodeURIComponent(address)}`;
+
+  try {
+    return await withTransientRetry(
+      async () => {
+        const res = await fetchWithTimeout(
+          url,
+          undefined,
+          options.timeoutMs,
+          'friendbot.fundTestnetAccount',
+        );
+
+        if (res.ok) {
+          let hash: string | undefined;
+          try {
+            const data = (await res.json()) as { hash?: string };
+            if (typeof data?.hash === 'string') {
+              hash = data.hash;
+            }
+          } catch {
+            // Ignore empty/non-JSON body on 200 OK
+          }
+          return { address, alreadyFunded: false, hash };
+        }
+
+        const errorBody = await res.text().catch(() => '');
+        if (res.status === 400 && isAlreadyFundedPayload(errorBody)) {
+          return { address, alreadyFunded: true };
+        }
+
+        throw new TrustFlowError(
+          `Friendbot rejected funding for ${address} (HTTP ${res.status})${errorBody ? `: ${errorBody}` : ''}`,
+          res.status >= 500 ? 'CONNECTION_ERROR' : 'NETWORK_ERROR',
+          {
+            status: res.status,
+            'retry-after': res.headers.get('retry-after'),
+          },
+        );
+      },
+      undefined,
+      options.retry,
+      'friendbot.fundTestnetAccount',
+    );
+  } catch (e) {
+    throw TrustFlowError.wrap(e, 'CONNECTION_ERROR');
   }
 }

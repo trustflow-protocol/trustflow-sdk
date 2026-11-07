@@ -82,7 +82,12 @@ export async function createFundedAccount(): Promise<Keypair> {
   const keypair = Keypair.random();
   await poll(`friendbot funding for ${keypair.publicKey()}`, async () => {
     const res = await fetch(`${E2E.friendbotUrl}?addr=${keypair.publicKey()}`);
-    return res.ok;
+    if (res.ok) return true;
+    if (res.status === 400) {
+      const body = await res.text().catch(() => '');
+      if (body.includes('createAccountAlreadyExist') || body.includes('op_already_exists')) return true;
+    }
+    return false;
   });
   return keypair;
 }

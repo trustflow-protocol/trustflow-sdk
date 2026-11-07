@@ -11,5 +11,9 @@ export type {
   AddAccountInput,
 } from './types';
 export { TrustFlowError } from '../errors';
-
-
+export {
+  DEFAULT_FRIENDBOT_URL,
+  fundTestnetAccount,
+  type FundTestnetAccountOptions,
+  type FundTestnetAccountResult,
+} from '../stellar/account';
