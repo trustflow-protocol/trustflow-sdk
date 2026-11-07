@@ -36,7 +36,7 @@ export * from './utils/interceptors';
 export * from './tx-pipeline';
 export * from './wallet/mock';
 export { TrustFlowClient } from './client';
-export type { GetBalanceOptions } from './client';
+export type { GetBalanceOptions, HealthCheckResult } from './client';
 export * from './errors';
 
 // Zod runtime validation schemas (#45) — re-exported by name rather than

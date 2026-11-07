@@ -1,6 +1,6 @@
 import { destroyAllPoolAgents } from './utils/connection-pool';
 import { negotiateApiVersion } from './utils/version';
-import { Config, Horizon, rpc, xdr } from '@stellar/stellar-sdk';
+import { Address, Config, Horizon, rpc, xdr } from '@stellar/stellar-sdk';
 import {
   HORIZON_URLS,
   SOROBAN_RPC_URLS,
@@ -30,6 +30,18 @@ import type { ApiRetryConfig } from './utils/http';
 
 /** Default TTL for opt-in Horizon balance caching. */
 export const DEFAULT_BALANCE_CACHE_TTL_MS = 5_000;
+
+/** Result returned by {@link TrustFlowClient.healthCheck} (#809). */
+export interface HealthCheckResult {
+  /** True when both Soroban RPC is healthy and the configured contract entry exists on-chain. */
+  ok: boolean;
+  /** True when `getHealth()` on the Soroban RPC server reports `'healthy'`. */
+  rpcReachable: boolean;
+  /** True when the configured `contractId` instance ledger entry exists on-chain. */
+  contractExists: boolean;
+  /** Round-trip elapsed time in milliseconds. */
+  latencyMs: number;
+}
 
 /** Controls cache behavior for a single balance lookup. */
 export interface GetBalanceOptions {
@@ -442,7 +454,66 @@ export class TrustFlowClient {
   }
 
   /**
+   * Performs a lightweight, non-throwing health check confirming whether the
+   * configured Soroban RPC server is reachable and the configured `contractId`
+   * exists on-chain (#809).
+   *
+   * Usable independently of {@link TrustFlowClient.connect} without mutating
+   * connection state, making it suitable for `/health` or `/status` endpoints.
+   *
+   * @returns `{ ok, rpcReachable, contractExists, latencyMs }`
+   *
+   * @example
+   * ```typescript
+   * app.get('/health', async (_req, res) => {
+   *   const status = await client.healthCheck();
+   *   res.status(status.ok ? 200 : 503).json(status);
+   * });
+   * ```
+   */
+  async healthCheck(): Promise<HealthCheckResult> {
+    const start = Date.now();
+    let rpcReachable = false;
+    let contractExists = false;
+
+    try {
+      const server = this.getSorobanServer();
+      const health = await server.getHealth();
+      rpcReachable = health?.status === 'healthy';
+
+      if (rpcReachable) {
+        try {
+          const contractKey = xdr.LedgerKey.contractData(
+            new xdr.LedgerKeyContractData({
+              contract: new Address(this.contractId).toScAddress(),
+              key: xdr.ScVal.scvLedgerKeyContractInstance(),
+              durability: xdr.ContractDataDurability.persistent(),
+            }),
+          );
+          const ledgerEntries = await server.getLedgerEntries(contractKey);
+          contractExists =
+            Array.isArray(ledgerEntries?.entries) && ledgerEntries.entries.length > 0;
+        } catch {
+          contractExists = false;
+        }
+      }
+    } catch {
+      rpcReachable = false;
+      contractExists = false;
+    }
+
+    const latencyMs = Math.max(0, Date.now() - start);
+    return {
+      ok: rpcReachable && contractExists,
+      rpcReachable,
+      contractExists,
+      latencyMs,
+    };
+  }
+
+  /**
    * Checks if the client is currently connected to the network.
+
    *
    * @returns true if connected, false otherwise
    */

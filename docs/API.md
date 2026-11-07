@@ -1094,3 +1094,15 @@ See [docs/TESTING.md](./TESTING.md) for full usage examples.
 - `minAmount` / `maxAmount` — Filter by amount bounds
 - `sortBy` — Sort field (`created_at`, `amount`, `deadline`, `status`)
 - `sortOrder` — Sort direction (`asc`, `desc`)
+
+## `TrustFlowClient.healthCheck()` (`HealthCheckResult`)
+
+- `client.healthCheck(): Promise<HealthCheckResult>` — Checks Soroban RPC reachability (`getHealth()`) and verifies that `contractId` exists on-chain (`getLedgerEntries`), returning `{ ok, rpcReachable, contractExists, latencyMs }` without modifying `.connect()` state.
+
+```typescript
+// Express / Fastify status route example
+app.get('/health', async (_req, reply) => {
+  const health = await client.healthCheck();
+  reply.status(health.ok ? 200 : 503).send(health);
+});
+```
