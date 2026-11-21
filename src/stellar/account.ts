@@ -2,6 +2,7 @@ import { TrustFlowError } from '../errors';
 import { withTransientRetry } from '../utils/node-retry';
 import type { ApiRetryConfig } from '../utils/http';
 import { fetchWithTimeout } from '../utils/timeout';
+import { assertStellarAddress } from '../utils/validation';
 import { getNetworkConfig, StellarNetwork } from './network';
 
 export interface AccountInfo {
@@ -47,6 +48,7 @@ function unfundedAccount(address: string): AccountInfo {
  * never been funded — callers showed "account not active" and prompted users to
  * fund an account that already had money. Now:
  *
+ * - invalid address → throws `TrustFlowError` `VALIDATION_ERROR` before a request
  * - `404` → `isActive: false` (the genuine "does not exist" case)
  * - any other `4xx` → throws `TrustFlowError` `NOT_FOUND`
  * - transport error / `5xx` / timeout after retries → throws `TrustFlowError`
@@ -59,9 +61,9 @@ function unfundedAccount(address: string): AccountInfo {
  * @param horizonUrl - Optional Horizon base URL override
  * @param timeoutMs - Optional request timeout in milliseconds
  * @returns The account's balance, sequence number and activation state
- * @throws {TrustFlowError} `NOT_FOUND` for a non-`404` client error,
- *   `CONNECTION_ERROR` when Horizon stays unreachable, or `TIMEOUT` when the
- *   deadline fires
+ * @throws {TrustFlowError} `VALIDATION_ERROR` for an invalid address,
+ *   `NOT_FOUND` for a non-`404` client error, `CONNECTION_ERROR` when Horizon
+ *   stays unreachable, or `TIMEOUT` when the deadline fires
  *
  * @example
  * ```typescript
@@ -76,6 +78,7 @@ export async function fetchAccountInfo(
   horizonUrl?: string,
   timeoutMs?: number,
 ): Promise<AccountInfo> {
+  assertStellarAddress(address, 'address');
   const effectiveHorizonUrl = horizonUrl ?? getNetworkConfig(network).horizonUrl;
 
   let response: Response | null;
@@ -83,7 +86,7 @@ export async function fetchAccountInfo(
     response = await withTransientRetry(
       async () => {
         const res = await fetchWithTimeout(
-          `${effectiveHorizonUrl}/accounts/${address}`,
+          `${effectiveHorizonUrl}/accounts/${encodeURIComponent(address)}`,
           undefined,
           timeoutMs,
           'horizon.fetchAccountInfo',
