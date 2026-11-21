@@ -69,7 +69,7 @@ export interface FeeEstimate {
   resourceFee: string;
   /** Inclusion fee range in stroops. */
   inclusionFee: FeeRange;
-  /** Total fee range (resource fee + inclusion fee) in stroops. */
+  /** Total fee range (resource fee + inclusion fee). */
   total: FeeRange;
   /** Execution resource footprint from simulation. */
   cost: {
@@ -155,7 +155,7 @@ export interface PipelineSubmission {
   ledger?: number;
   /** Whether the confirmed transaction was a fee-bump escalation. */
   feeBumped: boolean;
-  /** Total submission attempts made before confirmation. */
+  /** Number of send attempts made for the confirmed envelope before confirmation. */
   attempts: number;
   /** Final fee (stroops) charged on the confirmed transaction envelope. */
   feeCharged: string;
