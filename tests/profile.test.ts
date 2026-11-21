@@ -229,4 +229,58 @@ describe('ProfileClient', () => {
       expect(mockHttpPut).not.toHaveBeenCalled();
     });
   });
+
+  describe('profile cache', () => {
+    it('serves getProfile from cache on second call without hitting the network', async () => {
+      mockHttpGet.mockResolvedValueOnce({ data: { address: ADDRESS, displayName: 'Ada' } });
+
+      const client = new ProfileClient('http://api', 'tok');
+      const first = await client.getProfile(ADDRESS);
+      const second = await client.getProfile(ADDRESS);
+
+      expect(first.ok).toBe(true);
+      expect(second.ok).toBe(true);
+      if (first.ok && second.ok) {
+        expect(second.data.displayName).toBe('Ada');
+      }
+      // Only one network call despite two getProfile invocations
+      expect(mockHttpGet).toHaveBeenCalledTimes(1);
+    });
+
+    it('getProfile after updateProfile returns updated data without an extra network call (regression #750)', async () => {
+      mockHttpGet.mockResolvedValueOnce({ data: { address: ADDRESS, displayName: 'Old Name' } });
+      mockHttpPut.mockResolvedValueOnce({ data: { address: ADDRESS, displayName: 'New Name' } });
+
+      const client = new ProfileClient('http://api', 'tok');
+
+      // Warm the cache
+      const before = await client.getProfile(ADDRESS);
+      expect(before.ok).toBe(true);
+      if (before.ok) expect(before.data.displayName).toBe('Old Name');
+
+      // Update — cache should be refreshed with the response
+      const updated = await client.updateProfile(ADDRESS, { displayName: 'New Name' });
+      expect(updated.ok).toBe(true);
+
+      // Immediately read back — must reflect the new name, no additional GET
+      const after = await client.getProfile(ADDRESS);
+      expect(after.ok).toBe(true);
+      if (after.ok) expect(after.data.displayName).toBe('New Name');
+
+      expect(mockHttpGet).toHaveBeenCalledTimes(1);
+      expect(mockHttpPut).toHaveBeenCalledTimes(1);
+    });
+
+    it('bypasses cache when profileCacheTtlMs is 0', async () => {
+      mockHttpGet
+        .mockResolvedValueOnce({ data: { address: ADDRESS, displayName: 'First' } })
+        .mockResolvedValueOnce({ data: { address: ADDRESS, displayName: 'Second' } });
+
+      const client = new ProfileClient('http://api', 'tok', { profileCacheTtlMs: 0 });
+      await client.getProfile(ADDRESS);
+      await client.getProfile(ADDRESS);
+
+      expect(mockHttpGet).toHaveBeenCalledTimes(2);
+    });
+  });
 });

@@ -33,6 +33,11 @@ export class SimpleCache<K, V> {
     this.entries.set(key, { value, expiresAt: Date.now() + ttlMs });
   }
 
+  /** Removes a single cached entry by key. No-op if the key is not present. */
+  delete(key: K): void {
+    this.entries.delete(key);
+  }
+
   /** Removes all cached values. */
   clear(): void {
     this.entries.clear();

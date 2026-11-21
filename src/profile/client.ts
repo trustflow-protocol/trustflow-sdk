@@ -7,6 +7,7 @@ import type { ApiRetryConfig } from '../utils/http';
 import type { HttpInterceptors } from '../utils/interceptors';
 import { TrustFlowError } from '../errors';
 import { isValidCid } from '../storage/cid';
+import { SimpleCache } from '../utils/cache';
 
 function isValidUrlOrIpfs(url: string): boolean {
   if (!url || typeof url !== 'string') return false;
@@ -22,6 +23,9 @@ function isValidUrlOrIpfs(url: string): boolean {
   }
 }
 
+/** Default profile cache lifetime (30 seconds). */
+const DEFAULT_PROFILE_CACHE_TTL_MS = 30_000;
+
 export interface ProfileClientOptions {
   /** Per-request timeout (ms) applied to backend profile calls. */
   timeoutMs?: number;
@@ -36,6 +40,11 @@ export interface ProfileClientOptions {
   retry?: ApiRetryConfig;
   /** Request/response interceptor hooks applied to profile API calls. */
   interceptors?: HttpInterceptors;
+  /**
+   * TTL for the in-memory profile cache used by `getProfile` (ms).
+   * Set to `0` to disable caching entirely. Defaults to 30 000 ms.
+   */
+  profileCacheTtlMs?: number;
 }
 
 /**
@@ -56,6 +65,7 @@ export class ProfileClient {
   private readonly http;
   private readonly apiUrl: string;
   private readonly token: string;
+  private readonly profileCache: SimpleCache<string, Profile>;
 
   constructor(config: ContractConfig, options?: ProfileClientOptions);
   /** @deprecated Pass a ContractConfig object instead. */
@@ -90,10 +100,18 @@ export class ProfileClient {
         Authorization: `Bearer ${this.token}`,
       },
     });
+
+    const cacheTtl = options.profileCacheTtlMs ?? DEFAULT_PROFILE_CACHE_TTL_MS;
+    this.profileCache = new SimpleCache<string, Profile>(cacheTtl);
   }
 
   /**
    * Fetches a user's profile from the backend API.
+   *
+   * Results are cached for `profileCacheTtlMs` (default 30 s). The cache is
+   * updated synchronously by a successful `updateProfile` call, so a
+   * `getProfile` immediately following `updateProfile` reflects the new data
+   * without an extra network round-trip.
    *
    * Retries transient backend failures (network error, timeout, `429`, `5xx`)
    * with capped, jittered backoff before returning an error.
@@ -102,8 +120,15 @@ export class ProfileClient {
     if (!isValidStellarAddress(address)) {
       return { ok: false, error: `Invalid Stellar address for "address": ${address}` };
     }
+
+    const cached = this.profileCache.get(address);
+    if (cached !== undefined) {
+      return { ok: true, data: cached };
+    }
+
     try {
       const response = await this.http.get<Profile>(`/profiles/${address}`);
+      this.profileCache.set(address, response.data);
       return { ok: true, data: response.data };
     } catch (e) {
       return { ok: false, error: toApiErrorMessage(e) };
@@ -141,6 +166,10 @@ export class ProfileClient {
     }
     try {
       const response = await this.http.put<Profile>(`/profiles/${address}`, params);
+      // Update the cache with the fresh profile returned by the backend so a
+      // subsequent getProfile() call returns the new data without a network
+      // round-trip (fixes the stale-cache window described in issue #750).
+      this.profileCache.set(address, response.data);
       return { ok: true, data: response.data };
     } catch (e) {
       return { ok: false, error: toApiErrorMessage(e) };
