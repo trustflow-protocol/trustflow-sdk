@@ -268,6 +268,20 @@ client-side value** — the backend does not currently return a token TTL (track
 bound, not a guarantee, and still handle a `401` from the backend even when
 `isSessionExpired()` returns `false`.
 
+#### Wallet Disconnection vs. Full Logout (`disconnectWallet` vs `disconnectAll`)
+
+`disconnectWallet()` only clears the wallet connection state and leaves any cached `auth` session token untouched. For a **full logout** that disconnects the wallet **and** revokes all cached session/JWT tokens (including account-scoped sessions), call `disconnectAll()` from `@trustflow/sdk/wallet` (or `@trustflow/sdk`):
+
+```typescript
+import { disconnectAll, disconnectWallet } from '@trustflow/sdk/wallet';
+
+// Keep cached auth session / JWT intact, only tear down wallet connection:
+await disconnectWallet();
+
+// Full logout — disconnect wallet AND purge all cached auth sessions / JWTs:
+await disconnectAll();
+```
+
 ### Multiple Accounts in One Client
 
 A `TrustFlowClient` can act as many accounts. Register them on `client.accounts`, then switch

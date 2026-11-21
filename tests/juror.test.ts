@@ -1,5 +1,5 @@
 import { Keypair } from '@stellar/stellar-sdk';
-import { JurorClient, createVoteCommitment, revealVote } from '../src/juror/client';
+import { JurorClient, createVoteCommitment, revealVote, encryptVote, decryptVote } from '../src/juror/client';
 import { buildVoteArgs, buildRevealArgs } from '../src/contract/build';
 import { invokeContract } from '../src/contract/invoke';
 
@@ -562,3 +562,33 @@ describe('JurorClient.submitReveal (Issue #462)', () => {
   });
 });
 
+
+describe('ciphertext vote encryption helper with fresh random IV (#745)', () => {
+  it('produces distinct ciphertexts when encrypting the same vote choice twice with the same key', () => {
+    const key = new Uint8Array(32).fill(7);
+    const c1 = encryptVote('approve', key);
+    const c2 = encryptVote('approve', key);
+
+    expect(c1).not.toBe(c2);
+    expect(decryptVote(c1, key)).toBe('approve');
+    expect(decryptVote(c2, key)).toBe('approve');
+  });
+
+  it('supports string passphrases and JurorClient instance/static methods', () => {
+    const jurors = new JurorClient(CONFIG);
+    const c1 = jurors.encryptVote('reject', 'shared-juror-secret');
+    const c2 = JurorClient.encryptVote('reject', 'shared-juror-secret');
+
+    expect(c1).not.toBe(c2);
+    expect(jurors.decryptVote(c1, 'shared-juror-secret')).toBe('reject');
+    expect(JurorClient.decryptVote(c2, 'shared-juror-secret')).toBe('reject');
+  });
+
+  it('rejects tampered ciphertext or wrong key during decryptVote', () => {
+    const key = new Uint8Array(32).fill(9);
+    const wrongKey = new Uint8Array(32).fill(10);
+    const ciphertext = encryptVote('approve', key);
+
+    expect(() => decryptVote(ciphertext, wrongKey)).toThrow(/authentication failed/);
+  });
+});
