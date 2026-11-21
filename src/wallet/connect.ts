@@ -11,11 +11,34 @@ function normalizeWalletNetwork(name: string): string {
 }
 
 /**
+ * Connection attempts that have not settled yet, keyed by wallet type. Several
+ * components mounting at once and each calling `connectWallet()` share the one
+ * attempt instead of each opening its own wallet prompt (#741).
+ */
+const inFlightConnections = new Map<WalletType, Promise<WalletConnection>>();
+
+/**
  * Attempts to establish a connection with the specified Stellar wallet.
  * If the user rejects the connection dialog, a retryable TrustFlowError with
  * code 'USER_REJECTED' is thrown, leaving the connection state clean for subsequent attempts.
+ *
+ * Calls made while a connection to the same wallet type is still pending get
+ * that pending attempt's promise, so the wallet prompts only once and every
+ * caller sees the same result or error. Once the attempt settles, the next call
+ * starts a new one, so a retry after a rejection prompts again.
  */
-export async function connectWallet(type: WalletType = 'freighter'): Promise<WalletConnection> {
+export function connectWallet(type: WalletType = 'freighter'): Promise<WalletConnection> {
+  const pending = inFlightConnections.get(type);
+  if (pending) return pending;
+
+  const attempt = openWalletConnection(type).finally(() => {
+    inFlightConnections.delete(type);
+  });
+  inFlightConnections.set(type, attempt);
+  return attempt;
+}
+
+async function openWalletConnection(type: WalletType): Promise<WalletConnection> {
   if (type === 'freighter') {
     const freighter = getFreighter();
     if (!freighter) {

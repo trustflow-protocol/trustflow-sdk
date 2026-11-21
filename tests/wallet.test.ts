@@ -150,6 +150,94 @@ describe('wallet module', () => {
     });
   });
 
+  describe('concurrent connectWallet calls (#741)', () => {
+    function deferred<T>() {
+      let resolve!: (value: T) => void;
+      let reject!: (reason: unknown) => void;
+      const promise = new Promise<T>((res, rej) => {
+        resolve = res;
+        reject = rej;
+      });
+      return { promise, resolve, reject };
+    }
+
+    it('prompts Freighter once and gives every concurrent caller the same connection', async () => {
+      const key = deferred<string>();
+      const freighter = {
+        getPublicKey: jest.fn(() => key.promise),
+        getNetwork: jest.fn().mockResolvedValue('TESTNET'),
+      };
+      global.window = { freighter } as any;
+
+      const first = connectWallet('freighter');
+      const second = connectWallet('freighter');
+      const third = connectWallet();
+      key.resolve('GSHARED');
+
+      const results = await Promise.all([first, second, third]);
+      expect(freighter.getPublicKey).toHaveBeenCalledTimes(1);
+      expect(results[0]).toEqual({ type: 'freighter', publicKey: 'GSHARED', network: 'TESTNET' });
+      expect(results[1]).toBe(results[0]);
+      expect(results[2]).toBe(results[0]);
+    });
+
+    it('gives every concurrent caller the same rejection', async () => {
+      const key = deferred<string>();
+      const freighter = {
+        getPublicKey: jest.fn(() => key.promise),
+        getNetwork: jest.fn().mockResolvedValue('TESTNET'),
+      };
+      global.window = { freighter } as any;
+
+      const first = connectWallet('freighter');
+      const second = connectWallet('freighter');
+      key.reject(new Error('User declined access'));
+
+      await expect(first).rejects.toMatchObject({ code: 'USER_REJECTED' });
+      await expect(second).rejects.toMatchObject({ code: 'USER_REJECTED' });
+      expect(freighter.getPublicKey).toHaveBeenCalledTimes(1);
+    });
+
+    it('starts a new attempt once the previous one has settled, so a retry prompts again', async () => {
+      const freighter = {
+        getPublicKey: jest
+          .fn()
+          .mockRejectedValueOnce(new Error('User declined access'))
+          .mockResolvedValueOnce('GRETRY'),
+        getNetwork: jest.fn().mockResolvedValue('TESTNET'),
+      };
+      global.window = { freighter } as any;
+
+      await expect(connectWallet('freighter')).rejects.toMatchObject({ code: 'USER_REJECTED' });
+      await expect(connectWallet('freighter')).resolves.toMatchObject({ publicKey: 'GRETRY' });
+      expect(freighter.getPublicKey).toHaveBeenCalledTimes(2);
+    });
+
+    it('does not share a pending attempt across different wallet types', async () => {
+      const key = deferred<string>();
+      global.window = {
+        freighter: {
+          getPublicKey: jest.fn(() => key.promise),
+          getNetwork: jest.fn().mockResolvedValue('TESTNET'),
+        },
+        albedo: {
+          publicKey: jest.fn().mockResolvedValue({ pubkey: 'GALBEDO', token: '', network: 'testnet' }),
+        },
+      } as any;
+
+      const freighterConnection = connectWallet('freighter');
+      await expect(connectWallet('albedo')).resolves.toMatchObject({
+        type: 'albedo',
+        publicKey: 'GALBEDO',
+      });
+      key.resolve('GFREIGHTER');
+      await expect(freighterConnection).resolves.toMatchObject({
+        type: 'freighter',
+        publicKey: 'GFREIGHTER',
+      });
+    });
+  });
+
   describe('disconnectWallet', () => {
     it('is a no-op that resolves successfully', async () => {
       await expect(disconnectWallet()).resolves.toBeUndefined();

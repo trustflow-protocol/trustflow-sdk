@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Concurrent `connectWallet()` calls share one wallet prompt (#741)
+
+- Issue #741: `connectWallet()` now reuses the pending connection attempt when it is called again for the same wallet type before that attempt settles, so several components connecting on mount open one Freighter (or Albedo) prompt and all receive the same connection or error. Once the attempt settles, the next call prompts again, so retrying after a rejection still works.
+
 ### Logger redaction of non-secret `...Key` fields (#581)
 
 - Issue #581: `SDKLogger` no longer redacts every context field whose name contains `key`. Only secret-shaped names (`apiKey`, `api_key`, `secretKey`, `privateKey`, `signingKey`, ...) are redacted alongside `authorization`, `token`, `secret` and `password`, so public values such as `publicKey`, `pubkey` and `keypair` are logged. Secrets nested inside such objects are still redacted.
