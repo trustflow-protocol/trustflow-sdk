@@ -5,11 +5,13 @@ const ADDRESS = Keypair.random().publicKey();
 
 const mockHttpGet = jest.fn();
 const mockHttpPut = jest.fn();
+const mockHttpPost = jest.fn();
 
 jest.mock('../src/utils/http', () => ({
   createApiHttpClient: jest.fn(() => ({
     get: mockHttpGet,
     put: mockHttpPut,
+    post: mockHttpPost,
   })),
   toApiErrorMessage: (error: unknown) =>
     error instanceof Error ? `Network error: ${error.message}` : `Network error: ${String(error)}`,
@@ -19,6 +21,7 @@ describe('ProfileClient', () => {
   beforeEach(() => {
     mockHttpGet.mockReset();
     mockHttpPut.mockReset();
+    mockHttpPost.mockReset();
   });
 
   it('initialises with api url and token', () => {
@@ -227,6 +230,106 @@ describe('ProfileClient', () => {
         }
       }
       expect(mockHttpPut).not.toHaveBeenCalled();
+    });
+  });
+
+  // ── searchProfiles (#751) ─────────────────────────────────────────────────
+  describe('searchProfiles', () => {
+    it('returns search results for a plain query', async () => {
+      mockHttpGet.mockResolvedValueOnce({ data: [{ address: ADDRESS, displayName: 'Alice' }] });
+
+      const client = new ProfileClient('http://api', 'tok');
+      const result = await client.searchProfiles({ q: 'Alice' });
+
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.data[0].displayName).toBe('Alice');
+      }
+    });
+
+    it('URL-encodes & in the query so it does not split into a second parameter', async () => {
+      mockHttpGet.mockResolvedValueOnce({ data: [] });
+
+      const client = new ProfileClient('http://api', 'tok');
+      await client.searchProfiles({ q: 'name&tag=x' });
+
+      const calledUrl: string = mockHttpGet.mock.calls[0][0];
+      // The raw '&' must be percent-encoded; the word 'tag' must NOT appear as
+      // a separate query key.
+      expect(calledUrl).toContain('q=name%26tag%3Dx');
+      expect(calledUrl).not.toMatch(/[?&]tag=/);
+    });
+
+    it("URL-encodes O'Brien (apostrophe)", async () => {
+      mockHttpGet.mockResolvedValueOnce({ data: [] });
+
+      const client = new ProfileClient('http://api', 'tok');
+      await client.searchProfiles({ q: "O'Brien" });
+
+      const calledUrl: string = mockHttpGet.mock.calls[0][0];
+      expect(calledUrl).toContain("O%27Brien");
+    });
+
+    it('URL-encodes # in the query', async () => {
+      mockHttpGet.mockResolvedValueOnce({ data: [] });
+
+      const client = new ProfileClient('http://api', 'tok');
+      await client.searchProfiles({ q: 'tag#1' });
+
+      const calledUrl: string = mockHttpGet.mock.calls[0][0];
+      expect(calledUrl).toContain('tag%231');
+    });
+
+    it('URL-encodes + in the query', async () => {
+      mockHttpGet.mockResolvedValueOnce({ data: [] });
+
+      const client = new ProfileClient('http://api', 'tok');
+      await client.searchProfiles({ q: 'a+b' });
+
+      const calledUrl: string = mockHttpGet.mock.calls[0][0];
+      expect(calledUrl).toContain('a%2Bb');
+    });
+
+    it('URL-encodes non-ASCII characters', async () => {
+      mockHttpGet.mockResolvedValueOnce({ data: [] });
+
+      const client = new ProfileClient('http://api', 'tok');
+      await client.searchProfiles({ q: 'Ólafur' });
+
+      const calledUrl: string = mockHttpGet.mock.calls[0][0];
+      // 'Ó' encodes to %C3%93
+      expect(calledUrl).toContain('%C3%93');
+    });
+
+    it('appends optional limit and offset parameters', async () => {
+      mockHttpGet.mockResolvedValueOnce({ data: [] });
+
+      const client = new ProfileClient('http://api', 'tok');
+      await client.searchProfiles({ q: 'alice', limit: 10, offset: 20 });
+
+      const calledUrl: string = mockHttpGet.mock.calls[0][0];
+      expect(calledUrl).toContain('limit=10');
+      expect(calledUrl).toContain('offset=20');
+    });
+
+    it('returns an error result when q is empty', async () => {
+      const client = new ProfileClient('http://api', 'tok');
+      const result = await client.searchProfiles({ q: '' });
+
+      expect(result.ok).toBe(false);
+      expect(mockHttpGet).not.toHaveBeenCalled();
+    });
+
+    it('returns an error result on network failure', async () => {
+      mockHttpGet.mockRejectedValueOnce(new Error('timeout'));
+
+      const client = new ProfileClient('http://api', 'tok');
+      const result = await client.searchProfiles({ q: 'alice' });
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error).toMatch(/Network error/);
+      }
     });
   });
 });

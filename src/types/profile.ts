@@ -20,3 +20,22 @@ export interface UpdateProfileParams {
   bio?: string;
   avatarUrl?: string;
 }
+
+/** A single entry returned by the profile search endpoint. */
+export interface ProfileSearchResult {
+  address: StellarAddress;
+  displayName?: string;
+  avatarUrl?: string;
+  /** Relevance score assigned by the backend. */
+  score?: number;
+}
+
+/** Options accepted by {@link ProfileClient.searchProfiles}. */
+export interface SearchProfilesParams {
+  /** Free-text search query.  Will be URL-encoded before being sent. */
+  q: string;
+  /** Maximum number of results to return (backend default applies when omitted). */
+  limit?: number;
+  /** Zero-based page offset (backend default applies when omitted). */
+  offset?: number;
+}

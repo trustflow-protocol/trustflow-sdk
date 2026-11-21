@@ -1,5 +1,5 @@
 import type { SDKResult } from '../types/index';
-import type { Profile, UpdateProfileParams } from '../types/profile';
+import type { Profile, UpdateProfileParams, ProfileSearchResult, SearchProfilesParams } from '../types/profile';
 import type { ContractConfig } from '../types/contract';
 import { isValidStellarAddress } from '../utils/validation';
 import { createApiHttpClient, toApiErrorMessage } from '../utils/http';
@@ -104,6 +104,38 @@ export class ProfileClient {
     }
     try {
       const response = await this.http.get<Profile>(`/profiles/${address}`);
+      return { ok: true, data: response.data };
+    } catch (e) {
+      return { ok: false, error: toApiErrorMessage(e) };
+    }
+  }
+
+  /**
+   * Searches profiles by a free-text query.
+   *
+   * The query string is encoded with `URLSearchParams` before being appended to
+   * the request URL, so characters such as `&`, `#`, `+`, `'`, and non-ASCII
+   * code points are safely transmitted without corrupting the query string.
+   *
+   * @example
+   * ```typescript
+   * // A query containing special characters works correctly.
+   * const result = await profiles.searchProfiles({ q: "O'Brien & co" });
+   * ```
+   */
+  async searchProfiles(
+    params: SearchProfilesParams,
+  ): Promise<SDKResult<ProfileSearchResult[]>> {
+    if (!params.q || typeof params.q !== 'string') {
+      return { ok: false, error: 'searchProfiles: "q" must be a non-empty string' };
+    }
+    try {
+      const qs = new URLSearchParams({ q: params.q });
+      if (params.limit !== undefined) qs.set('limit', String(params.limit));
+      if (params.offset !== undefined) qs.set('offset', String(params.offset));
+      const response = await this.http.get<ProfileSearchResult[]>(
+        `/profiles/search?${qs.toString()}`,
+      );
       return { ok: true, data: response.data };
     } catch (e) {
       return { ok: false, error: toApiErrorMessage(e) };
