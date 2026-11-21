@@ -207,3 +207,37 @@ export const NETWORK_CONFIGS = NETWORKS;
 export function getNetworkConfig(network: StellarNetwork) {
   return NETWORKS[network];
 }
+
+/**
+ * Returns the well-known network whose canonical `rpcUrl` hostname matches
+ * `rpcUrl`, or `undefined` when the URL is custom / unrecognised.
+ *
+ * Only the hostname is compared so that path variations (e.g. `/rpc` vs root)
+ * and protocol differences do not cause false negatives.
+ */
+export function inferNetworkFromRpcUrl(rpcUrl: string): StellarNetworkConfig | undefined {
+  let hostname: string;
+  try {
+    hostname = new URL(rpcUrl).hostname;
+  } catch {
+    return undefined;
+  }
+  return Object.values(NETWORKS).find((cfg) => {
+    try {
+      return new URL(cfg.rpcUrl).hostname === hostname;
+    } catch {
+      return false;
+    }
+  });
+}
+
+/**
+ * Checks whether `rpcUrl` and `networkPassphrase` belong to the same
+ * well-known Stellar network.  Returns `true` (no mismatch detected) when
+ * either value is unrecognised — the check is advisory, not authoritative.
+ */
+export function rpcUrlMatchesPassphrase(rpcUrl: string, networkPassphrase: string): boolean {
+  const inferredNetwork = inferNetworkFromRpcUrl(rpcUrl);
+  if (!inferredNetwork) return true; // unknown / custom endpoint — can't judge
+  return inferredNetwork.passphrase === networkPassphrase;
+}

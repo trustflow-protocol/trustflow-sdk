@@ -18,7 +18,7 @@ import { AccountManager } from './accounts/manager';
 import type { AccountContext, AccountOptions, AddAccountInput } from './accounts/types';
 import { assertStellarAddress } from './utils/validation';
 import { fetchAccountInfo, type AccountInfo } from './stellar/account';
-import { NETWORK_CONFIGS } from './stellar/network';
+import { NETWORK_CONFIGS, rpcUrlMatchesPassphrase } from './stellar/network';
 import { withTransientRetry } from './utils/node-retry';
 import {
   assertWebCryptoSupport,
@@ -189,6 +189,21 @@ export class TrustFlowClient {
     this._networkPassphrase = config.networkPassphrase ?? NETWORK_PASSPHRASES[this.network];
     if (typeof this._networkPassphrase !== 'string' || !this._networkPassphrase.trim()) {
       throw new TrustFlowError('networkPassphrase must not be empty', 'INVALID_CONFIG');
+    }
+
+    // Issue #759 — warn when both rpcUrl and networkPassphrase are explicitly
+    // supplied and the rpcUrl's hostname matches a well-known network whose
+    // canonical passphrase differs from the one provided.  This combination
+    // cannot work: transactions signed with the wrong passphrase are invalid on
+    // the target network, and the resulting failures are confusing to diagnose.
+    if (config.rpcUrl && config.networkPassphrase) {
+      if (!rpcUrlMatchesPassphrase(config.rpcUrl, config.networkPassphrase)) {
+        logger.warn(
+          'rpcUrl and networkPassphrase appear to target different networks. ' +
+            'Transactions signed with this configuration will be rejected. ' +
+            `rpcUrl: "${config.rpcUrl}", networkPassphrase: "${config.networkPassphrase}"`,
+        );
+      }
     }
     this.apiBaseUrl = config.apiBaseUrl;
     this.apiKey = config.apiKey;
