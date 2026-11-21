@@ -162,6 +162,62 @@ export function formatAmount(stroops: bigint | number | string): string {
   return stroopsToXLM(stroops);
 }
 
+/** Stellar amounts carry at most 7 fraction digits (1 stroop = 0.0000001 XLM). */
+const XLM_DECIMALS = 7;
+
+/** Options for {@link formatBalance}. */
+export interface FormatBalanceOptions {
+  /**
+   * Maximum fraction digits to display, from 0 to 7 (Stellar's precision).
+   * Defaults to 7, which shows every stroop.
+   */
+  decimals?: number;
+}
+
+/**
+ * Formats an XLM balance (e.g. the string returned by `getBalance`) for display
+ * without ever showing a nonzero balance as zero (#739).
+ *
+ * Digits beyond `decimals` are truncated, never rounded up, so the display
+ * never overstates what the account holds. When that truncation would leave a
+ * genuinely nonzero balance reading as zero, the result is `'< 0.01'` (for
+ * `decimals: 2`) instead, which a UI can tell apart from an empty account.
+ *
+ * @param amount - Decimal XLM amount string with at most 7 fraction digits
+ * @param options - `decimals` to cap the displayed fraction digits
+ * @returns The formatted amount, trailing zeros removed, or `'< 0.0…1'` for a
+ *   nonzero balance below the display precision
+ * @throws {TrustFlowError} If `amount` is not a valid XLM amount or `decimals`
+ *   is outside 0–7
+ *
+ * @example
+ * ```ts
+ * formatBalance('0.0000100');               // '0.00001'
+ * formatBalance('12.3456789', { decimals: 2 }); // '12.34'
+ * formatBalance('0.0000100', { decimals: 2 });  // '< 0.01'
+ * formatBalance('0.0000000');               // '0'
+ * ```
+ */
+export function formatBalance(amount: string, options: FormatBalanceOptions = {}): string {
+  const { decimals = XLM_DECIMALS } = options;
+  if (!Number.isInteger(decimals) || decimals < 0 || decimals > XLM_DECIMALS) {
+    throw TrustFlowError.validation(
+      'decimals',
+      `Decimals must be an integer from 0 to ${XLM_DECIMALS}, got ${decimals}`,
+    );
+  }
+  const stroops = toBaseUnits(amount, XLM_DECIMALS);
+  const step = 10n ** BigInt(XLM_DECIMALS - decimals);
+  // Bigint division truncates toward zero, so this never rounds a balance up.
+  const truncated = (stroops / step) * step;
+
+  if (truncated === 0n && stroops !== 0n) {
+    const smallest = decimals === 0 ? '1' : `0.${'0'.repeat(decimals - 1)}1`;
+    return stroops > 0n ? `< ${smallest}` : `> -${smallest}`;
+  }
+  return fromBaseUnits(truncated, XLM_DECIMALS);
+}
+
 /**
  * Truncates a Stellar address or contract ID for display.
  *

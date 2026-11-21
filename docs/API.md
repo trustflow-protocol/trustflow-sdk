@@ -171,7 +171,8 @@ types.
 - Also available as `client.storage.upload(file)` on `TrustFlowClient` (configure via `new TrustFlowClient({ ipfs: { apiKey } })`)
 
 ## Contract Bindings
-- `client.createContractBinding(specEntries, contractId?)` — builds a spec-driven `SorobanContractClient` (`methods.*`, `read_*`, `simulate_*`); also `createContractBinding`, `SorobanSpec`, `AbstractContractClient` and `generateTypeScriptBindings` from the root entry
+- `createContractBinding(client, specEntries, contractId?)` from `@trustflow/sdk/contract` — builds a spec-driven `SorobanContractClient` (`methods.*`, `read_*`, `simulate_*`). The same subpath exports `SorobanSpec`, `AbstractContractClient`, `generateTypeScriptBindings`, `invokeContract`, `readContractState` and the `build*Args` helpers; import only what you call and the rest is tree-shaken (#736)
+- `client.createContractBinding(specEntries, contractId?)` — **deprecated**: keeps the Soroban spec parser (~20 KB minified) in every bundle that imports `TrustFlowClient`; use the standalone function above. See [the #736 spike](./spikes/issue-736-contract-bundle-size.md) for the size breakdown
 - See [CONTRACT_BINDINGS.md](./CONTRACT_BINDINGS.md) for obtaining spec entries, the JS-to-Soroban type-mapping table and known gaps
 
 ## EscrowBuilder
@@ -398,13 +399,14 @@ const uri = generateSep7Uri(preparedXdr, {
 
 ### Exported Functions
 
-- `connectWallet(walletType?)` — Initiates connection to a specified wallet
+- `connectWallet(walletType?, options?)` — Initiates connection to a specified wallet
   - `walletType` (optional): One of 'freighter', 'albedo', 'xbull', 'manual'; defaults to 'freighter'
+  - `options.onAccountChange` (optional, `ConnectWalletOptions`): Freighter only — called with the new public key when the user switches accounts in the extension. The SDK keeps a single `message` listener on `window` for this; a later `connectWallet` call replaces it and `disconnectWallet()` removes it, so connect/disconnect cycles never leak listeners (#737)
   - Returns a `WalletConnection` (plain data object with type, publicKey, and network)
   - **Throws** `TrustFlowError` with code 'UNAUTHORIZED' if wallet not supported or not installed
   
 - `disconnectWallet()` — Disconnects from the currently connected wallet
-  - Most Stellar wallets don't expose a disconnect API, so this is a no-op in practice
+  - Most Stellar wallets don't expose a disconnect API, so this clears SDK-local state only, including removing the account-change listener registered by `connectWallet`
   
 - `getFreighter()` — Gets the Freighter wallet adapter (the low-level API)
   - Throws `TrustFlowError` if Freighter is not installed
@@ -446,13 +448,18 @@ const uri = generateSep7Uri(preparedXdr, {
     disconnect(): Promise<void>;
   }
   ```
-- `createFreighterAdapter()` — Returns a `WalletAdapter` backed by the injected Freighter extension (#435).
+- `createFreighterAdapter(options?)` — Returns a `WalletAdapter` backed by the injected Freighter extension (#435).
   The extension is looked up on each call. `isAvailable()` resolves `false` when it is missing; the other
   methods throw `TrustFlowError` with code `UNAUTHORIZED`.
+  - `options.network` (`FreighterAdapterOptions`): the network your client is configured for (pass `client.network`).
+    Before the wallet is prompted, `sign(xdr, network)` requires `network` to be a known network, to match
+    `options.network`, and to match the network Freighter is on; any mismatch throws `SIGNING_ERROR` without a
+    sign prompt (#738). A raw XDR does not embed its network passphrase, so for a full passphrase check sign a
+    `Transaction` object with `signWithFreighter` instead.
   ```typescript
   import { createFreighterAdapter } from '@trustflow/sdk/wallet';
 
-  const adapter = createFreighterAdapter();
+  const adapter = createFreighterAdapter({ network: client.network });
   if (await adapter.isAvailable()) {
     const { publicKey } = await adapter.connect();
   }
@@ -484,6 +491,18 @@ try {
   }
 }
 ```
+
+## Balance Formatting
+
+- `formatBalance(amount, options?)` — Formats an XLM balance string (such as the one `getBalance` returns) for display (#739)
+  - `options.decimals` (`FormatBalanceOptions`): maximum fraction digits, 0–7; defaults to 7 (every stroop)
+  - Extra digits are truncated, never rounded up, so a balance is never overstated
+  - A nonzero balance below the display precision is shown as `'< 0.01'` (for `decimals: 2`) rather than `'0'`, so it stays distinguishable from an empty account
+  ```typescript
+  const balance = await client.getBalance(address); // '0.0000100' (100 stroops)
+  formatBalance(balance);                 // '0.00001'
+  formatBalance(balance, { decimals: 2 }); // '< 0.01'
+  ```
 
 ## Event Parsing Utilities (`src/events.ts`)
 

@@ -73,6 +73,7 @@ const BROWSER_ENTRIES = [
   'src/wallet/index.ts',
   'src/utils/index.ts',
   'src/hooks/index.ts',
+  'src/contract/index.ts',
 ];
 
 /**

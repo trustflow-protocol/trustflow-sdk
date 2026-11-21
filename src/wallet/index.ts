@@ -1,7 +1,9 @@
 export { getFreighter, isFreighterInstalled } from './freighter';
 export { getAlbedo, signWithAlbedo } from './albedo';
 export { connectWallet, disconnectWallet } from './connect';
+export type { ConnectWalletOptions } from './connect';
 export { createFreighterAdapter } from './adapter';
+export type { FreighterAdapterOptions } from './adapter';
 export { generateSep7Uri, SEP7_MAX_URI_LENGTH } from './sep7';
 export type { Sep7Options } from './sep7';
 export type { WalletType, WalletConnection, WalletAdapter } from './types';

@@ -16,10 +16,7 @@ const readme = fs.readFileSync(path.join(root, 'README.md'), 'utf8');
 const tsup = fs.readFileSync(path.join(root, 'tsup.config.ts'), 'utf8');
 
 function packageImportSpecifiers(source: string): string[] {
-  const re = new RegExp(
-    `from\\s+['"](${pkg.name.replace('/', '\\/')}(?:\\/[^'"]+)?)['"]`,
-    'g',
-  );
+  const re = new RegExp(`from\\s+['"](${pkg.name.replace('/', '\\/')}(?:\\/[^'"]+)?)['"]`, 'g');
   const found = new Set<string>();
   let m: RegExpExecArray | null;
   while ((m = re.exec(source)) !== null) {
@@ -65,6 +62,7 @@ describe('package exports map (#100)', () => {
       './wallet': 'src/wallet/index.ts',
       './utils': 'src/utils/index.ts',
       './testing': 'src/testing/index.ts',
+      './contract': 'src/contract/index.ts',
     };
     for (const [subpath, entry] of Object.entries(entryForSubpath)) {
       if (exportKeys.includes(subpath)) {

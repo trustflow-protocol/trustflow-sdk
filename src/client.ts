@@ -500,7 +500,9 @@ export class TrustFlowClient {
    * @param address - Stellar public key (G... address)
    * @param options - Set `skipCache` to bypass a configured balance cache, and
    *   `account` to read/write a specific account's cache entry
-   * @returns Balance in XLM as a string
+   * @returns Balance in XLM as a string, at Horizon's full 7-decimal precision
+   *   (e.g. `'0.0000100'` for 100 stroops). To show it with fewer decimals, use
+   *   `formatBalance`, which never turns a nonzero balance into a zero string (#739).
    * @throws {TrustFlowError} If the account doesn't exist or network error occurs
    *
    * @example
@@ -761,6 +763,12 @@ export class TrustFlowClient {
    * const binding = client.createContractBinding(specXdrEntries);
    * const res = await binding.methods.create_escrow({ depositor, beneficiary, amount, duration }, caller);
    * ```
+   *
+   * @deprecated Use the standalone `createContractBinding(client, specEntries)`
+   *   from `@trustflow/sdk/contract` instead. Because this method lives on the
+   *   client class, every app that imports `TrustFlowClient` ships the Soroban
+   *   spec parser (~20 KB minified) whether or not it ever builds a binding;
+   *   removing it in a future major release lets bundlers drop that code (#736).
    */
   createContractBinding<T extends Record<string, any> = Record<string, any>>(
     specEntries: (xdr.ScSpecEntry | string | Uint8Array | Buffer)[],

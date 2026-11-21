@@ -10,6 +10,9 @@ export default defineConfig({
     'src/wallet/index.ts',
     'src/utils/index.ts',
     'src/testing/index.ts',
+    // Contract bindings and the Soroban spec parser live on their own subpath so
+    // apps that never build a binding don't ship the parser (#736).
+    'src/contract/index.ts',
     // Node-only entry. The only module graph in the package that reaches for
     // `http`/`https`, which is what keeps every other entry polyfill-free in a
     // browser bundle (#webpack5).

@@ -42,6 +42,11 @@
       "types": "./dist/testing/index.d.ts",
       "import": "./dist/testing/index.mjs",
       "require": "./dist/testing/index.js"
+    },
+    "./contract": {
+      "types": "./dist/contract/index.d.ts",
+      "import": "./dist/contract/index.mjs",
+      "require": "./dist/contract/index.js"
     }
   },
   "files": [
@@ -93,7 +98,8 @@
     "docs": "typedoc",
     "docs:watch": "typedoc --watch",
     "prepublishOnly": "npm run build",
-    "size": "size-limit"
+    "size": "size-limit",
+    "size:report": "node scripts/bundle-report.mjs"
   },
   "size-limit": [
     {

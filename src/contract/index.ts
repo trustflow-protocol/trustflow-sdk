@@ -32,3 +32,6 @@ export {
 } from './build';
 export type { SimulationResult, SimulateContractCallOptions, ResourceFootprint } from './simulate';
 export { estimateResourceFootprint, STROOPS_PER_XLM } from './simulate';
+// Re-exported like the other subpath entries so `instanceof` checks against
+// errors thrown from this entry use the same class as the root entry (#304).
+export { TrustFlowError } from '../errors';

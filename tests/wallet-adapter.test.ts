@@ -87,6 +87,66 @@ describe('createFreighterAdapter (#435)', () => {
   });
 });
 
+describe('createFreighterAdapter network guard (#738)', () => {
+  function freighterOn(network: string) {
+    const signTransaction = jest.fn().mockResolvedValue({ signedXDR: 'signed_xdr' });
+    installFreighter({
+      getPublicKey: jest.fn().mockResolvedValue(PUBLIC_KEY),
+      getNetwork: jest.fn().mockResolvedValue(network),
+      signTransaction,
+      signMessage: jest.fn(),
+    });
+    return signTransaction;
+  }
+
+  it('refuses a MAINNET sign on a TESTNET-configured adapter without prompting the wallet', async () => {
+    const signTransaction = freighterOn('PUBLIC');
+    const adapter = createFreighterAdapter({ network: 'TESTNET' });
+
+    await expect(adapter.sign('mainnet_xdr', 'MAINNET')).rejects.toMatchObject({
+      code: 'SIGNING_ERROR',
+      message: expect.stringContaining('configured for TESTNET'),
+    });
+    await expect(adapter.sign('mainnet_xdr', 'PUBLIC')).rejects.toMatchObject({
+      code: 'SIGNING_ERROR',
+    });
+    expect(signTransaction).not.toHaveBeenCalled();
+  });
+
+  it('refuses when the wallet is on a different network than requested', async () => {
+    const signTransaction = freighterOn('PUBLIC');
+    const adapter = createFreighterAdapter({ network: 'TESTNET' });
+
+    await expect(adapter.sign('xdr', 'TESTNET')).rejects.toMatchObject({
+      code: 'SIGNING_ERROR',
+      message: expect.stringContaining('wallet is on PUBLIC'),
+    });
+    expect(signTransaction).not.toHaveBeenCalled();
+  });
+
+  it('refuses an unknown network name without prompting', async () => {
+    const signTransaction = freighterOn('TESTNET');
+    const adapter = createFreighterAdapter();
+
+    await expect(adapter.sign('xdr', 'MAINNNET')).rejects.toMatchObject({
+      code: 'SIGNING_ERROR',
+    });
+    expect(signTransaction).not.toHaveBeenCalled();
+  });
+
+  it('signs when the configured, requested and wallet networks all agree', async () => {
+    const signTransaction = freighterOn('PUBLIC');
+    const adapter = createFreighterAdapter({ network: 'MAINNET' });
+
+    await expect(adapter.sign('xdr', 'MAINNET')).resolves.toBe('signed_xdr');
+    expect(signTransaction).toHaveBeenCalledWith('xdr', { network: 'MAINNET' });
+  });
+
+  it('rejects an unsupported configured network up front', () => {
+    expect(() => createFreighterAdapter({ network: 'NOPE' as any })).toThrow(TrustFlowError);
+  });
+});
+
 describe('MockWalletAdapter.asWalletAdapter (#435)', () => {
   it('exposes the mock through the WalletAdapter interface and shares its state', async () => {
     const mock = new MockWalletAdapter(PUBLIC_KEY);

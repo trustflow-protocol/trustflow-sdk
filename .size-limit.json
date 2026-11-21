@@ -44,6 +44,12 @@
     ]
   },
   {
+    "path": "dist/contract/index.mjs",
+    "limit": "15 KB",
+    "name": "Contract entry (./contract)",
+    "ignore": ["@stellar/stellar-sdk", "axios", "zod"]
+  },
+  {
     "path": "dist/testing/index.mjs",
     "limit": "35 KB",
     "name": "Testing entry (./testing)",
