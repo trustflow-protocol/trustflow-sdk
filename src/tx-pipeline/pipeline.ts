@@ -50,6 +50,7 @@ function fail<T>(error: TrustFlowError): PipelineResult<T> {
 }
 
 const FEE_RELATED_PATTERN = /TRY_AGAIN_LATER|insufficient.?fee|tx_insufficient_fee/i;
+const BAD_SEQ_PATTERN = /tx_bad_seq/i;
 
 /**
  * Fee-related failures are the only ones worth escalating to a fee-bump
@@ -60,6 +61,19 @@ const FEE_RELATED_PATTERN = /TRY_AGAIN_LATER|insufficient.?fee|tx_insufficient_f
 function isFeeRelated(error: TrustFlowError): boolean {
   const cause = error.cause instanceof Error ? error.cause.message : '';
   return FEE_RELATED_PATTERN.test(`${error.message} ${cause}`);
+}
+
+/**
+ * Returns true when the submission error is a bad-sequence rejection.
+ *
+ * A `tx_bad_seq` rejection means the cached sequence number diverged from
+ * the real on-chain sequence (e.g. an external transaction advanced it).
+ * The fix is to re-fetch the account and rebuild the transaction, not to
+ * replay the same envelope.
+ */
+function isBadSequence(error: TrustFlowError): boolean {
+  const cause = error.cause instanceof Error ? error.cause.message : String(error.cause ?? '');
+  return BAD_SEQ_PATTERN.test(`${error.message} ${cause}`);
 }
 
 /** Only confirmation-poll exhaustion should trigger a fee bump, not RPC transport timeouts. */
@@ -718,6 +732,33 @@ export class TransactionPipeline {
     }
 
     this.pipelineLogger.warn('Transaction submission failed', { error: submitted.error.message });
+
+    // Bad-sequence recovery: if the node rejected with tx_bad_seq, the cached
+    // sequence number diverged from the real on-chain value (e.g. an external
+    // transaction advanced it while we were building).  Re-fetch the account
+    // sequence and rebuild the transaction before retrying once.  This is safe
+    // to do unconditionally because the original envelope was never accepted.
+    if (isBadSequence(submitted.error)) {
+      this.pipelineLogger.info('Bad-sequence rejection — re-fetching account sequence', {
+        sourceAccount: params.sourceAccount,
+      });
+      const resynced = await this.assemble(params, params.prepare);
+      if (!resynced.ok) {
+        this.pipelineLogger.warn('Re-assembly after bad-seq failed; returning original error', {
+          error: resynced.error.message,
+        });
+        return submitted;
+      }
+      const reprepared = await this.prepare(resynced.data, params.prepare);
+      if (!reprepared.ok) {
+        this.pipelineLogger.warn('Re-prepare after bad-seq failed; returning original error', {
+          error: reprepared.error.message,
+        });
+        return submitted;
+      }
+      reprepared.data.sign(...params.signers);
+      return this.submit(reprepared.data, params.submit);
+    }
 
     const feeBumpOptions = params.submit?.feeBump;
     if (!feeBumpOptions || !isFeeRelated(submitted.error)) {

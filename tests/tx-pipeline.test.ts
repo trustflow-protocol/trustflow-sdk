@@ -1014,4 +1014,74 @@ describe('TransactionPipeline.run failure paths', () => {
     expect(getSpy).not.toHaveBeenCalled();
     expect(sendSpy).not.toHaveBeenCalled();
   });
+
+  // ── bad-sequence recovery (#763) ──────────────────────────────────────────
+
+  it('re-fetches account sequence and retries once on tx_bad_seq (#763)', async () => {
+    const source = Keypair.random();
+    // First getAccount call returns sequence 100 (stale).
+    // Second call (re-fetch after bad-seq) returns 200 (synced with on-chain).
+    const getAccountSpy = jest
+      .spyOn(rpc.Server.prototype, 'getAccount')
+      .mockResolvedValueOnce(new Account(source.publicKey(), '100'))
+      .mockResolvedValueOnce(new Account(source.publicKey(), '200'));
+    jest.spyOn(rpc.Server.prototype, 'simulateTransaction').mockResolvedValue(simSuccess('500'));
+    const sendSpy = jest
+      .spyOn(rpc.Server.prototype, 'sendTransaction')
+      .mockResolvedValueOnce({
+        status: 'ERROR',
+        hash: 'stale-seq-hash',
+        latestLedger: 1,
+        latestLedgerCloseTime: 1,
+        errorResult: xdr.TransactionResult.fromXDR(
+          // Minimal XDR for txBAD_SEQ — the pipeline only checks the error message text.
+          'AAAAAAAAAGT////6AAAAAA==',
+          'base64',
+        ),
+      } as unknown as rpc.Api.SendTransactionResponse)
+      .mockResolvedValueOnce(sendResult('PENDING', 'fresh-seq-hash'));
+    jest.spyOn(rpc.Server.prototype, 'getTransaction').mockResolvedValue({
+      status: rpc.Api.GetTransactionStatus.SUCCESS,
+      ledger: 10,
+    } as unknown as rpc.Api.GetTransactionResponse);
+
+    const result = await new TransactionPipeline(makeClient()).run(runParams(source));
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.hash).toBe('fresh-seq-hash');
+    // getAccount must have been called twice: once for initial assembly, once
+    // for the bad-seq re-sync.
+    expect(getAccountSpy).toHaveBeenCalledTimes(2);
+    // sendTransaction called twice: initial (rejected) + retry with fresh seq.
+    expect(sendSpy).toHaveBeenCalledTimes(2);
+    // The retry used sequence 201 (one past the re-fetched 200).
+    const retrySend = sendSpy.mock.calls[1][0] as Transaction;
+    expect(retrySend.sequence).toBe('201');
+  });
+
+  it('surfaces SUBMISSION_ERROR directly when bad-seq re-assembly fails (#763)', async () => {
+    const source = Keypair.random();
+    jest
+      .spyOn(rpc.Server.prototype, 'getAccount')
+      .mockResolvedValueOnce(new Account(source.publicKey(), '100'))
+      .mockRejectedValueOnce(new Error('Horizon unreachable'));
+    jest.spyOn(rpc.Server.prototype, 'simulateTransaction').mockResolvedValue(simSuccess('500'));
+    jest
+      .spyOn(rpc.Server.prototype, 'sendTransaction')
+      .mockResolvedValueOnce({
+        status: 'ERROR',
+        hash: 'bad-seq-hash',
+        latestLedger: 1,
+        latestLedgerCloseTime: 1,
+        errorResult: xdr.TransactionResult.fromXDR('AAAAAAAAAGT////6AAAAAA==', 'base64'),
+      } as unknown as rpc.Api.SendTransactionResponse);
+
+    const result = await new TransactionPipeline(makeClient()).run(runParams(source));
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    // Falls back to the original submission error when re-assembly fails.
+    expect(result.error.code).toBe('SUBMISSION_ERROR');
+  });
 });
