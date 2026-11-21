@@ -1,4 +1,4 @@
-export { JurorClient, createVoteCommitment, revealVote } from './client';
+export { JurorClient, createVoteCommitment, revealVote, encryptVote, decryptVote } from './client';
 export type {
   VoteCommitment,
   RevealVoteResult,

@@ -160,6 +160,107 @@ export function revealVote(voteForDepositor: boolean, salt: Uint8Array): RevealV
  * if (revealResult.ok) console.log('Revealed! tx:', revealResult.data.txHash);
  * ```
  */
+
+function resolveNodeCrypto(): any {
+  try {
+    const proc = typeof process !== 'undefined' ? (process as any) : undefined;
+    if (typeof proc?.getBuiltinModule === 'function') {
+      const builtin = proc.getBuiltinModule('crypto');
+      if (builtin) return builtin;
+    }
+    const req = typeof require !== 'undefined' ? require : undefined;
+    return req ? req('crypto') : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function normalizeAesKey(key: Uint8Array | string): Uint8Array {
+  if (typeof key === 'string') {
+    if (/^[0-9a-fA-F]{64}$/.test(key)) {
+      return new Uint8Array(Buffer.from(key, 'hex'));
+    }
+    const nodeCrypto = resolveNodeCrypto();
+    if (nodeCrypto?.createHash) {
+      return new Uint8Array(nodeCrypto.createHash('sha256').update(key, 'utf8').digest());
+    }
+    const { hash: stellarHash } = require('@stellar/stellar-sdk');
+    return new Uint8Array(stellarHash(Buffer.from(key, 'utf8')));
+  }
+  if (key instanceof Uint8Array && key.length === 32) {
+    return key;
+  }
+  throw new TrustFlowError(
+    'Encryption key must be a 32-byte Uint8Array, a 64-character hex string, or a passphrase string',
+    'ENCRYPTION_ERROR',
+  );
+}
+
+/**
+ * Encrypts a juror vote choice using AES-256-GCM with a fresh cryptographically
+ * secure 12-byte random IV per call (#745), returning a base64 payload encoding
+ * `iv (12 bytes) || authTag (16 bytes) || ciphertext`.
+ *
+ * Because a new CSPRNG IV is drawn on every invocation, encrypting the same vote
+ * choice twice with the same key always produces distinct ciphertexts.
+ */
+export function encryptVote(choice: VoteChoice | boolean, key: Uint8Array | string): string {
+  const plaintext =
+    typeof choice === 'boolean' ? (choice ? 'approve' : 'reject') : String(choice);
+  if (!VALID_CHOICES.includes(plaintext as VoteChoice)) {
+    throw new TrustFlowError(
+      `vote choice must be one of: ${VALID_CHOICES.join(', ')}`,
+      'VALIDATION_ERROR',
+    );
+  }
+  const keyBytes = normalizeAesKey(key);
+  const iv = randomBytes(12);
+  const nodeCrypto = resolveNodeCrypto();
+  if (!nodeCrypto?.createCipheriv) {
+    throw new TrustFlowError('AES-256-GCM vote encryption is unavailable in this environment', 'ENCRYPTION_ERROR');
+  }
+  const cipher = nodeCrypto.createCipheriv('aes-256-gcm', Buffer.from(keyBytes), Buffer.from(iv));
+  const encrypted = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return Buffer.concat([Buffer.from(iv), tag, encrypted]).toString('base64');
+}
+
+/**
+ * Decrypts a base64 vote ciphertext produced by {@link encryptVote} and verifies
+ * its AES-256-GCM authentication tag (#745).
+ */
+export function decryptVote(ciphertextBase64: string, key: Uint8Array | string): VoteChoice {
+  const keyBytes = normalizeAesKey(key);
+  let raw: Buffer;
+  try {
+    raw = Buffer.from(ciphertextBase64, 'base64');
+  } catch (e) {
+    throw new TrustFlowError('Invalid base64 vote ciphertext', 'DECRYPTION_ERROR', e);
+  }
+  if (raw.length <= 28) {
+    throw new TrustFlowError('Malformed vote ciphertext: payload too short', 'DECRYPTION_ERROR');
+  }
+  const iv = raw.subarray(0, 12);
+  const tag = raw.subarray(12, 28);
+  const data = raw.subarray(28);
+  const nodeCrypto = resolveNodeCrypto();
+  if (!nodeCrypto?.createDecipheriv) {
+    throw new TrustFlowError('AES-256-GCM vote decryption is unavailable in this environment', 'DECRYPTION_ERROR');
+  }
+  try {
+    const decipher = nodeCrypto.createDecipheriv('aes-256-gcm', Buffer.from(keyBytes), iv);
+    decipher.setAuthTag(tag);
+    const plaintext = Buffer.concat([decipher.update(data), decipher.final()]).toString('utf8');
+    if (!VALID_CHOICES.includes(plaintext as VoteChoice)) {
+      throw new TrustFlowError(`Decrypted vote is not a valid choice: ${plaintext}`, 'DECRYPTION_ERROR');
+    }
+    return plaintext as VoteChoice;
+  } catch (e) {
+    if (e instanceof TrustFlowError) throw e;
+    throw new TrustFlowError('Failed to decrypt vote ciphertext: authentication failed', 'DECRYPTION_ERROR', e);
+  }
+}
+
 export class JurorClient {
   private readonly storedSalts = new Map<string, { salt: Uint8Array; expiresAt?: number }>();
   private _trustFlowClient?: TrustFlowClient;
@@ -304,6 +405,22 @@ export class JurorClient {
 
   static revealVote(voteForDepositor: boolean, salt: Uint8Array): RevealVoteResult {
     return revealVote(voteForDepositor, salt);
+  }
+
+  encryptVote(choice: VoteChoice | boolean, key: Uint8Array | string): string {
+    return encryptVote(choice, key);
+  }
+
+  decryptVote(ciphertextBase64: string, key: Uint8Array | string): VoteChoice {
+    return decryptVote(ciphertextBase64, key);
+  }
+
+  static encryptVote(choice: VoteChoice | boolean, key: Uint8Array | string): string {
+    return encryptVote(choice, key);
+  }
+
+  static decryptVote(ciphertextBase64: string, key: Uint8Array | string): VoteChoice {
+    return decryptVote(ciphertextBase64, key);
   }
 
   /**

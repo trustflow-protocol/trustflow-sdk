@@ -33,7 +33,8 @@ export type TrustFlowErrorCode =
   | 'STORAGE_GATEWAY_ERROR'
   | 'INVALID_EXPIRATION'
   | 'ENCRYPTION_ERROR'
-  | 'DECRYPTION_ERROR';
+  | 'DECRYPTION_ERROR'
+  | 'UNSUPPORTED_WALLET_VERSION';
 
 export class TrustFlowError extends Error {
   readonly code: TrustFlowErrorCode;
@@ -207,5 +208,21 @@ export class TrustFlowError extends Error {
       ? detail
       : `Invalid expiration: ${detail}`;
     return new TrustFlowError(message, 'INVALID_EXPIRATION', cause, field);
+  }
+}
+
+export class UnsupportedWalletVersionError extends TrustFlowError {
+  readonly walletType: string;
+  readonly missingMethods: string[];
+
+  constructor(walletType: string, missingMethods: string[], cause?: unknown) {
+    super(
+      `Unsupported ${walletType} wallet extension version: missing required API method(s) (${missingMethods.join(', ')}). Please upgrade your ${walletType} browser extension to the latest version.`,
+      'UNSUPPORTED_WALLET_VERSION',
+      cause,
+    );
+    this.name = 'UnsupportedWalletVersionError';
+    this.walletType = walletType;
+    this.missingMethods = missingMethods;
   }
 }

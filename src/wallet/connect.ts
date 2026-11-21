@@ -2,7 +2,8 @@ import type { WalletConnection, WalletType } from './types';
 import { isWalletRejection } from './types';
 import { getFreighter } from './freighter';
 import { getAlbedo } from './albedo';
-import { TrustFlowError } from '../errors';
+import { TrustFlowError, UnsupportedWalletVersionError } from '../errors';
+import { clearAllSessions } from '../auth/session';
 
 /** Wallets may name the public network `public` or `pubnet`; the SDK calls it `MAINNET`. */
 function normalizeWalletNetwork(name: string): string {
@@ -17,10 +18,17 @@ function normalizeWalletNetwork(name: string): string {
  */
 export async function connectWallet(type: WalletType = 'freighter'): Promise<WalletConnection> {
   if (type === 'freighter') {
-    const freighter = getFreighter();
-    if (!freighter) {
+    const rawFreighter = typeof window !== 'undefined' ? (window as any)?.freighter : undefined;
+    if (!rawFreighter) {
       throw new TrustFlowError('Freighter not installed', 'UNAUTHORIZED');
     }
+    const missingMethods = (['getPublicKey', 'getNetwork'] as const).filter(
+      (method) => typeof rawFreighter[method] !== 'function',
+    );
+    if (missingMethods.length > 0) {
+      throw new UnsupportedWalletVersionError('Freighter', [...missingMethods]);
+    }
+    const freighter = getFreighter()!;
     try {
       const publicKey = await freighter.getPublicKey();
       if (!publicKey) {
@@ -76,4 +84,21 @@ export async function connectWallet(type: WalletType = 'freighter'): Promise<Wal
 
 export async function disconnectWallet(): Promise<void> {
   // Most Stellar wallets don't have a disconnect API — clear local state only
+}
+
+/**
+ * Performs a full logout by disconnecting the active wallet and purging all
+ * cached authentication session state (JWTs, refresh tokens, and scoped
+ * session keys) via `clearAllSessions()` (#742).
+ *
+ * Use `disconnectAll()` when signing a user out of the application completely,
+ * and `disconnectWallet()` when only tearing down the wallet connection while
+ * keeping any existing backend auth session intact.
+ */
+export async function disconnectAll(): Promise<void> {
+  try {
+    await disconnectWallet();
+  } finally {
+    clearAllSessions();
+  }
 }

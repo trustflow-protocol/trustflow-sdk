@@ -60,3 +60,5 @@ export {
   parseRpcResponse,
 } from './schemas';
 export type { CreateEscrowInput, ReleaseEscrowInput, DisputeEscrowInput, ClaimEscrowInput, FundEscrowInput, VoteInput } from './schemas';
+
+export { connectWallet, disconnectWallet, disconnectAll } from './wallet/connect';

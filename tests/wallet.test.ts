@@ -1,8 +1,9 @@
-import { connectWallet, disconnectWallet } from '../src/wallet/connect';
+import { connectWallet, disconnectWallet, disconnectAll } from '../src/wallet/connect';
+import { saveSession, loadSession } from '../src/auth/session';
 import { getFreighter, isFreighterInstalled } from '../src/wallet/freighter';
 import { getAlbedo } from '../src/wallet/albedo';
 import { isWalletRejection } from '../src/wallet/types';
-import { TrustFlowError } from '../src/errors';
+import { TrustFlowError, UnsupportedWalletVersionError } from '../src/errors';
 
 describe('wallet module', () => {
   const originalWindow = global.window;
@@ -149,6 +150,41 @@ describe('wallet module', () => {
       await expect(connectWallet('albedo')).resolves.toMatchObject({ network: 'TESTNET' });
     });
   });
+
+
+    it('throws UnsupportedWalletVersionError when window.freighter has an incompatible/legacy API shape (#740)', async () => {
+      // Simulate an older Freighter extension exposing getAddress instead of getPublicKey / getNetwork
+      global.window = {
+        freighter: {
+          getAddress: jest.fn().mockResolvedValue('GBM...'),
+        },
+      } as any;
+
+      await expect(connectWallet('freighter')).rejects.toThrow(UnsupportedWalletVersionError);
+      await expect(connectWallet('freighter')).rejects.toMatchObject({
+        name: 'UnsupportedWalletVersionError',
+        code: 'UNSUPPORTED_WALLET_VERSION',
+        walletType: 'Freighter',
+        missingMethods: ['getPublicKey', 'getNetwork'],
+      });
+    });
+  });
+
+  describe('disconnectAll (#742)', () => {
+    it('clears both wallet connection and cached auth session state while disconnectWallet keeps sessions intact', async () => {
+      saveSession('jwt-token-123', 'GADDR123');
+      saveSession('jwt-scoped-456', 'GADDR456', undefined, 'alice');
+      expect(loadSession()?.token).toBe('jwt-token-123');
+      expect(loadSession('alice')?.token).toBe('jwt-scoped-456');
+
+      // disconnectWallet() alone does not clear auth sessions
+      await disconnectWallet();
+      expect(loadSession()?.token).toBe('jwt-token-123');
+
+      // disconnectAll() purges unscoped and scoped auth sessions
+      await disconnectAll();
+      expect(loadSession()).toBeNull();
+    });
 
   describe('disconnectWallet', () => {
     it('is a no-op that resolves successfully', async () => {
