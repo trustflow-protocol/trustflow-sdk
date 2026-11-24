@@ -7,6 +7,7 @@ export type {
   FeeEstimate,
   FeeRange,
   PipelineResult,
+  PipelineStage,
   PipelineSubmission,
   PrepareOptions,
   RetryPolicy,

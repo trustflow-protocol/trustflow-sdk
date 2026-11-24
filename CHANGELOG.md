@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Transaction pipeline: duplicate submits, abort, fee-rejection bumps and progress (#765, #766, #767, #768)
+
+- Issue #765: A resubmitted envelope that the node rejects with `txBAD_SEQ` now resolves as success when a lookup shows an earlier broadcast of it landed. `submit()` returns that ledger, so an idempotent retry no longer throws. Before, `run()` treated the rejection as a stale sequence and rebuilt a new transaction, which could run the operation a second time. An envelope that is not on ledger keeps its `SUBMISSION_ERROR`.
+- Issue #766: Added `SubmitOptions.signal`. Aborting it stops confirmation polling, including the wait between polls, and sends no further fee-bump envelopes. The submission resolves with a `SUBMISSION_ERROR` that names the hash, and the transaction may still confirm. Before, the polling loop kept calling RPC after the caller had moved on. `run()` also stops before rebuilding or fee-bumping once its signal aborts.
+- Issue #767: A fee-rejection bump with no pinned `baseFee` now escalates from current fee stats, using the same formula as a timeout bump. Before, it reused the rejected fee, which could be too low when congestion was rising. A pinned `baseFee` is still used unchanged. If fee stats can't be read, the bump falls back to the rejected fee, as before.
+- Issue #768: Added `SubmitOptions.onProgress(stage)` and the `PipelineStage` type (`'broadcasting' | 'confirming'`). It is called once when an envelope is sent and once when polling for it starts. A fee-bump escalation reports both stages again. Assembly, simulation and signing run before `submit()` and are not reported. A throwing callback is logged and ignored. Added [`examples/submit-progress.ts`](examples/submit-progress.ts), a console progress bar.
+
 ### Dispute status polling, deadline validation and Node entry spike (#711, #780, #781, #783)
 
 - Issue #783: Added `useDisputeStatus(source, escrowId, { interval, pauseWhenHidden })` to `@trustflow/sdk/react`, built on `usePolling`. It pauses while the tab is hidden and fetches once when the tab is shown again, so background tabs stop sending requests. Polling stops once the dispute is `resolved` or `cancelled`. The issue's hook did not exist in `src/` before this change.

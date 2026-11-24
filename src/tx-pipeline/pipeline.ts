@@ -23,6 +23,7 @@ import type {
   FeeEstimate,
   FeeRange,
   PipelineResult,
+  PipelineStage,
   PipelineSubmission,
   PrepareOptions,
   RetryPolicy,
@@ -40,6 +41,14 @@ const DEFAULT_RETRY_POLICY: Required<Omit<RetryPolicy, 'timeoutMs'>> = {
 
 const DEFAULT_POLL_INTERVAL_MS = 1500;
 const DEFAULT_POLL_ATTEMPTS = 10;
+const DEFAULT_FEE_BUMP_MULTIPLIER = 2;
+/**
+ * Lookups made for a transaction the node rejected with `txBAD_SEQ`, before
+ * concluding that it never landed (#765).
+ */
+const LANDED_LOOKUP_ATTEMPTS = 3;
+/** `txBAD_SEQ` in the Stellar XDR `TransactionResultCode` enum. */
+const TX_BAD_SEQ_RESULT_CODE = -5;
 
 function ok<T>(data: T): PipelineResult<T> {
   return { ok: true, data };
@@ -93,8 +102,49 @@ function isConfirmationPollTimeout(error: unknown): boolean {
   return false;
 }
 
-async function sleep(ms: number): Promise<void> {
-  await new Promise<void>((resolve) => setTimeout(resolve, ms));
+/**
+ * Waits for `ms`, or until `signal` aborts, whichever comes first. It does not
+ * throw on abort; the caller checks the signal itself.
+ */
+async function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  await new Promise<void>((resolve) => {
+    const finish = (): void => {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', finish);
+      resolve();
+    };
+    const timer = setTimeout(finish, ms);
+    signal?.addEventListener('abort', finish, { once: true });
+  });
+}
+
+/**
+ * The error a submission resolves with once `SubmitOptions.signal` aborts. It
+ * is marked non-retryable: `classifyFailure` would otherwise treat it as a
+ * transport failure, because it carries no code and no cause.
+ *
+ * @param hash - Hash of the broadcast envelope, when one was already broadcast
+ */
+function abortedError(hash?: string): TrustFlowError {
+  const detail =
+    hash === undefined
+      ? 'aborted before broadcast'
+      : `aborted while confirming ${hash}; the transaction may still confirm`;
+  return markTransient(TrustFlowError.submissionFailed(detail), false);
+}
+
+/**
+ * True when a node `ERROR` response carries the `txBAD_SEQ` result code. Reads
+ * the typed XDR, because the error message only names the transaction hash.
+ */
+function hasBadSequenceResult(errorResult: unknown): boolean {
+  try {
+    const result = errorResult as xdr.TransactionResult | undefined;
+    const code = result?.result().switch() as unknown as { value?: unknown } | undefined;
+    return code?.value === TX_BAD_SEQ_RESULT_CODE;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -195,9 +245,9 @@ async function withRetry<T>(
  * parallel. The queue is shared by every `TransactionPipeline` in the current
  * process; it does not coordinate across processes or machines, and the
  * low-level `assemble`/`submit` methods bypass it. Use `queueTimeoutMs` to fail
- * with a `TIMEOUT` error instead of waiting behind a stuck run. There is no
- * abort signal yet, so a run that has started keeps the queue until it reaches
- * a terminal state.
+ * with a `TIMEOUT` error instead of waiting behind a stuck run. A run that has
+ * started keeps the queue until it reaches a terminal state; passing
+ * `submit.signal` ends its confirmation wait early.
  *
  * Every method returns a {@link PipelineResult}, never throws for expected
  * failure modes, so callers get typed, actionable errors without try/catch.
@@ -529,7 +579,7 @@ export class TransactionPipeline {
       return result;
     }
 
-    const multiplier = feeBumpOptions.feeBumpMultiplier ?? 2;
+    const multiplier = feeBumpOptions.feeBumpMultiplier ?? DEFAULT_FEE_BUMP_MULTIPLIER;
     if (!Number.isFinite(multiplier) || multiplier <= 1) {
       this.pipelineLogger.warn('Invalid fee-bump multiplier; returning the original timeout');
       return result;
@@ -540,26 +590,15 @@ export class TransactionPipeline {
     const multiplierBps = BigInt(Math.round(multiplier * 10_000));
 
     for (let bumpNumber = 1; bumpNumber <= maxFeeBump; bumpNumber++) {
-      const stats = await withRetry(
-        () => this.server.getFeeStats(),
-        options,
-        'submit.feeStats',
-        this.client.timeoutMs,
-      );
-      if (!stats.ok) {
-        this.pipelineLogger.warn('Could not read fee stats for automatic fee bump', {
-          error: stats.error.message,
-        });
-        return result;
-      }
+      // An aborted caller gets no further envelopes.
+      if (options?.signal?.aborted) return result;
+
+      const floor = previousBaseFee > BigInt(tx.fee) ? previousBaseFee : BigInt(tx.fee);
+      const estimate = await this.estimateBumpBaseFee(floor, multiplierBps, options);
+      if (estimate === undefined) return result;
 
       try {
-        const feeStats = stats.data.sorobanInclusionFee.p90 || stats.data.inclusionFee.p90;
-        const networkBaseFee = BigInt(feeStats);
-        const baseline = [previousBaseFee, BigInt(tx.fee), networkBaseFee].reduce((max, fee) =>
-          fee > max ? fee : max,
-        );
-        const baseFee = ((baseline * multiplierBps + 9_999n) / 10_000n).toString();
+        const baseFee = estimate.toString();
         const bumped = this.buildFeeBump(tx, { feeSource: feeBumpOptions.feeSource, baseFee });
         if (!bumped.ok) {
           this.pipelineLogger.warn('Automatic fee-bump construction failed', {
@@ -602,6 +641,126 @@ export class TransactionPipeline {
     return result;
   }
 
+  /**
+   * Fee for an automatic fee bump: the higher of `floor` and the network's
+   * current p90 inclusion fee, multiplied by `multiplierBps` (basis points).
+   * Returns `undefined` when fee stats cannot be read, so each caller can
+   * choose its own fallback.
+   */
+  private async estimateBumpBaseFee(
+    floor: bigint,
+    multiplierBps: bigint,
+    options?: SubmitOptions,
+  ): Promise<bigint | undefined> {
+    const stats = await withRetry(
+      () => this.server.getFeeStats(),
+      options,
+      'submit.feeStats',
+      this.client.timeoutMs,
+    );
+    if (!stats.ok) {
+      this.pipelineLogger.warn('Could not read fee stats for automatic fee bump', {
+        error: stats.error.message,
+      });
+      return undefined;
+    }
+
+    try {
+      const networkBaseFee = BigInt(
+        stats.data.sorobanInclusionFee.p90 || stats.data.inclusionFee.p90,
+      );
+      const baseline = floor > networkBaseFee ? floor : networkBaseFee;
+      return (baseline * multiplierBps + 9_999n) / 10_000n;
+    } catch (error) {
+      this.pipelineLogger.warn('Could not read fee stats for automatic fee bump', { error });
+      return undefined;
+    }
+  }
+
+  /**
+   * Base fee for a fee-rejection bump that does not pin `baseFee`. It uses the
+   * same escalation as a timeout bump, computed from current fee stats instead
+   * of the fee the network just rejected (#767). Falls back to the inner fee
+   * when no estimate is available.
+   */
+  private async rejectedBumpBaseFee(
+    inner: Transaction,
+    options: FeeBumpOptions,
+    submitOptions?: SubmitOptions,
+  ): Promise<string> {
+    const multiplier = options.feeBumpMultiplier ?? DEFAULT_FEE_BUMP_MULTIPLIER;
+    if (!Number.isFinite(multiplier) || multiplier <= 1) {
+      return inner.fee;
+    }
+    const estimate = await this.estimateBumpBaseFee(
+      BigInt(inner.fee),
+      BigInt(Math.round(multiplier * 10_000)),
+      submitOptions,
+    );
+    return estimate === undefined ? inner.fee : estimate.toString();
+  }
+
+  /**
+   * Looks up a transaction the node rejected with `txBAD_SEQ`, to see whether
+   * an earlier broadcast of the same envelope already landed (#765). Returns
+   * `undefined` when it is not on ledger after a few lookups, so the rejection
+   * stands. A landed transaction that failed on-chain is a terminal error.
+   */
+  private async findLandedLedger(
+    hash: string,
+    options?: SubmitOptions,
+  ): Promise<{ ledger?: number } | undefined> {
+    const intervalMs = options?.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
+    for (let i = 0; i < LANDED_LOOKUP_ATTEMPTS; i++) {
+      if (options?.signal?.aborted) return undefined;
+
+      const lookup = await withRetry(
+        () => this.server.getTransaction(hash),
+        options,
+        'submit.poll',
+        this.client.timeoutMs,
+      );
+      if (!lookup.ok) return undefined;
+      if (lookup.data.status === rpc.Api.GetTransactionStatus.SUCCESS) {
+        return { ledger: lookup.data.ledger };
+      }
+      if (lookup.data.status === rpc.Api.GetTransactionStatus.FAILED) {
+        // Already on ledger and failed: resending would re-run the operation,
+        // so this is terminal rather than a sequence problem.
+        throw TrustFlowError.submissionFailed(`transaction ${hash} failed on-chain`);
+      }
+      if (i < LANDED_LOOKUP_ATTEMPTS - 1) {
+        await sleep(intervalMs, options?.signal);
+      }
+    }
+    return undefined;
+  }
+
+  private submissionResult(
+    tx: SubmittableTransaction,
+    hash: string,
+    attempts: number,
+    ledger?: number,
+  ): PipelineSubmission {
+    return {
+      hash,
+      ledger,
+      feeBumped: tx instanceof FeeBumpTransaction,
+      attempts,
+      feeCharged: tx.fee,
+    };
+  }
+
+  /** Reports a stage to `onProgress`. A throwing callback is logged, never rethrown. */
+  private reportProgress(options: SubmitOptions | undefined, stage: PipelineStage): void {
+    if (!options?.onProgress) return;
+    try {
+      options.onProgress(stage);
+    } catch (error) {
+      this.pipelineLogger.warn('Progress callback failed', { error });
+    }
+  }
+
   private async notifyFeeBump(options: FeeBumpOptions, event: FeeBumpEvent): Promise<void> {
     try {
       await options.onFeeBump?.(event);
@@ -625,8 +784,23 @@ export class TransactionPipeline {
     // `pollTimeoutMs` / `confirmTimeoutMs` (#764). Each `getTransaction` poll
     // is bounded separately inside `pollForConfirmation`.
     const rpcTimeoutMs = options?.timeoutMs ?? this.client.timeoutMs;
+    // Each stage is reported once, however many attempts run inside it: a
+    // `TRY_AGAIN_LATER` replay stays in `broadcasting`.
+    let stage: PipelineStage | undefined;
+    const enterStage = (next: PipelineStage): void => {
+      if (next === stage) return;
+      stage = next;
+      this.reportProgress(options, next);
+    };
+
     return withRetry(
       async (attempt) => {
+        if (options?.signal?.aborted) {
+          // Nothing has been broadcast yet, so there is no hash to report.
+          throw abortedError();
+        }
+
+        enterStage('broadcasting');
         this.pipelineLogger.debug('Sending transaction to network', {
           attempt,
           hash: tx.hash?.toString(),
@@ -638,6 +812,16 @@ export class TransactionPipeline {
         );
 
         if (sendResult.status === 'ERROR') {
+          if (hasBadSequenceResult(sendResult.errorResult)) {
+            // The envelope is byte-identical to one already broadcast, so an
+            // earlier send probably landed and consumed the sequence number.
+            // Report that result rather than rebuilding a new transaction, which
+            // would run the operation a second time (#765).
+            const landed = await this.findLandedLedger(sendResult.hash, options);
+            if (landed) {
+              return this.submissionResult(tx, sendResult.hash, attempt, landed.ledger);
+            }
+          }
           // Terminal: the node evaluated and rejected this envelope.
           throw TrustFlowError.submissionFailed(
             `node rejected transaction (${sendResult.hash})`,
@@ -650,15 +834,9 @@ export class TransactionPipeline {
           throw markTransient(TrustFlowError.submissionFailed('node reported TRY_AGAIN_LATER'));
         }
 
+        enterStage('confirming');
         const ledger = await this.pollForConfirmation(sendResult.hash, options);
-
-        return {
-          hash: sendResult.hash,
-          ledger,
-          feeBumped: tx instanceof FeeBumpTransaction,
-          attempts: attempt,
-          feeCharged: tx.fee,
-        };
+        return this.submissionResult(tx, sendResult.hash, attempt, ledger);
       },
       { ...options, timeoutMs: undefined },
       'submit',
@@ -741,6 +919,12 @@ export class TransactionPipeline {
     }
 
     this.pipelineLogger.warn('Transaction submission failed', { error: submitted.error.message });
+
+    // An aborted caller must not get a rebuilt or fee-bumped transaction sent
+    // on its behalf.
+    if (params.submit?.signal?.aborted) {
+      return submitted;
+    }
 
     // Bad-sequence recovery: if the node rejected with tx_bad_seq, the cached
     // sequence number diverged from the real on-chain value (e.g. an external
@@ -826,7 +1010,12 @@ export class TransactionPipeline {
       prepared.data = freshTx.build();
     }
 
-    const feeBumped = this.buildFeeBump(prepared.data, feeBumpOptions);
+    // A pinned `baseFee` is used as given. Otherwise the escalation reads
+    // current fee stats rather than reusing the fee that was just rejected (#767).
+    const baseFee =
+      feeBumpOptions.baseFee ??
+      (await this.rejectedBumpBaseFee(prepared.data, feeBumpOptions, params.submit));
+    const feeBumped = this.buildFeeBump(prepared.data, { ...feeBumpOptions, baseFee });
     if (!feeBumped.ok) {
       // The escalation is a recovery attempt: if the fee-bump envelope cannot
       // even be built, the caller still needs the reason the original
@@ -842,7 +1031,7 @@ export class TransactionPipeline {
     await this.notifyFeeBump(feeBumpOptions, {
       previousHash: prepared.data.hash().toString('hex'),
       hash: feeBumped.data.hash().toString('hex'),
-      baseFee: feeBumpOptions.baseFee ?? prepared.data.fee,
+      baseFee,
       attempt: 1,
       reason: 'fee-rejection',
     });
@@ -890,6 +1079,8 @@ export class TransactionPipeline {
     });
 
     for (let i = 0; i < attempts; i++) {
+      // Checked every iteration so an aborted caller stops polling promptly (#766).
+      if (options?.signal?.aborted) throw abortedError(hash);
       if (deadlineExpired()) throwDeadline();
 
       const result = await withRetry(
@@ -916,7 +1107,7 @@ export class TransactionPipeline {
       if (i < attempts - 1) {
         // Cap the sleep so a long interval still observes the deadline promptly.
         const remaining = deadline === undefined ? intervalMs : Math.max(0, deadline - Date.now());
-        await sleep(Math.min(intervalMs, remaining));
+        await sleep(Math.min(intervalMs, remaining), options?.signal);
       }
     }
 

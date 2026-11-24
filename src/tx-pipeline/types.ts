@@ -89,9 +89,13 @@ export interface FeeBumpOptions {
   /** Keypair of the account that will pay the bumped fee and sign the fee-bump envelope. */
   feeSource: Keypair;
   /**
-   * Fee in stroops for the fee-bump envelope. Defaults to the inner
+   * Fee in stroops for the fee-bump envelope. For a manual
+   * {@link TransactionPipeline.buildFeeBump} call this defaults to the inner
    * transaction's fee, which always satisfies Stellar's requirement that the
-   * fee-bump base fee cover the inner transaction's fee rate.
+   * fee-bump base fee cover the inner transaction's fee rate. When an
+   * automatic fee-rejection bump omits it, the pipeline reads current fee
+   * stats and escalates from them (see {@link FeeBumpOptions.feeBumpMultiplier}),
+   * so the bump does not reuse the fee the network just rejected.
    */
   baseFee?: string;
   /**
@@ -100,9 +104,10 @@ export interface FeeBumpOptions {
    */
   maxFeeBump?: number;
   /**
-   * Fee multiplier applied at each timeout escalation step. The first bump
-   * uses the latest RPC p90 inclusion fee times this multiplier; each later
-   * bump increases the previous base fee by the same factor. Defaults to 2.
+   * Fee multiplier applied at each automatic bump, whether it follows a
+   * confirmation timeout or a fee rejection. The first bump uses the latest
+   * RPC p90 inclusion fee times this multiplier; each later timeout bump
+   * increases the previous base fee by the same factor. Defaults to 2.
    */
   feeBumpMultiplier?: number;
   /** Called after a fee-bump envelope is built and signed, before it is submitted. */
@@ -156,7 +161,30 @@ export interface SubmitOptions extends RetryPolicy {
    * this configuration.
    */
   feeBump?: FeeBumpOptions;
+  /**
+   * Aborts the submission. Checked before each broadcast, before every
+   * confirmation poll and during the wait between polls, so a stalled wait
+   * ends promptly; no further fee-bump envelopes are sent either. An aborted
+   * submission resolves with a `SUBMISSION_ERROR` whose message names the
+   * hash. Aborting does not cancel a transaction that was already broadcast,
+   * which may still confirm.
+   */
+  signal?: AbortSignal;
+  /**
+   * Called once per stage transition: `broadcasting` when the envelope is
+   * sent and `confirming` when the pipeline starts polling for it. Each
+   * fee-bump escalation reports its own `broadcasting` and `confirming`.
+   * Omitting the callback has no effect on the submission. An error thrown
+   * by the callback is logged and does not change the result.
+   */
+  onProgress?: (stage: PipelineStage) => void;
 }
+
+/**
+ * Stages reported to {@link SubmitOptions.onProgress}. Assembly, simulation
+ * and signing run before `submit()`, so they are not reported.
+ */
+export type PipelineStage = 'broadcasting' | 'confirming';
 
 /** Outcome of a successfully confirmed submission. */
 export interface PipelineSubmission {

@@ -418,6 +418,12 @@ describe('TransactionPipeline.run', () => {
     // A realistic Soroban resource fee: the prepared inner fee is the
     // inclusion fee plus this, far above the old fixed 1,000-stroop default.
     jest.spyOn(rpc.Server.prototype, 'simulateTransaction').mockResolvedValue(simSuccess('50000'));
+    // The default fee-rejection bump reads current fee stats (#767).
+    jest.spyOn(rpc.Server.prototype, 'getFeeStats').mockResolvedValue({
+      latestLedger: 100,
+      inclusionFee: { p90: '500' },
+      sorobanInclusionFee: { p90: '600' },
+    } as unknown as rpc.Api.GetFeeStatsResponse);
 
     const sendSpy = jest
       .spyOn(rpc.Server.prototype, 'sendTransaction')
@@ -1083,5 +1089,450 @@ describe('TransactionPipeline.run failure paths', () => {
     if (result.ok) return;
     // Falls back to the original submission error when re-assembly fails.
     expect(result.error.code).toBe('SUBMISSION_ERROR');
+  });
+});
+
+// ── duplicate submission of a landed envelope (#765) ─────────────────────────
+
+describe('TransactionPipeline duplicate submission (#765)', () => {
+  afterEach(() => jest.restoreAllMocks());
+
+  /** A `TransactionResult` whose result code is `txBAD_SEQ` (-5): fee 100, empty ext. */
+  const BAD_SEQ_RESULT = 'AAAAAAAAAGT////7AAAAAA==';
+
+  function badSeqRejection(hash: string): rpc.Api.SendTransactionResponse {
+    return {
+      status: 'ERROR',
+      hash,
+      latestLedger: 1,
+      latestLedgerCloseTime: 1,
+      errorResult: xdr.TransactionResult.fromXDR(BAD_SEQ_RESULT, 'base64'),
+    } as unknown as rpc.Api.SendTransactionResponse;
+  }
+
+  function txStatus(status: rpc.Api.GetTransactionStatus, ledger?: number) {
+    return { status, ledger } as unknown as rpc.Api.GetTransactionResponse;
+  }
+
+  function signedTx(): Transaction {
+    const keypair = Keypair.random();
+    const tx = buildUnsignedTx(keypair.publicKey());
+    tx.sign(keypair);
+    return tx;
+  }
+
+  it('reads txBAD_SEQ from the typed XDR result', () => {
+    const result = xdr.TransactionResult.fromXDR(BAD_SEQ_RESULT, 'base64');
+    expect((result.result().switch() as unknown as { value: number }).value).toBe(-5);
+  });
+
+  it('resolves a resubmitted envelope whose first broadcast already landed', async () => {
+    const sendSpy = jest
+      .spyOn(rpc.Server.prototype, 'sendTransaction')
+      .mockResolvedValue(badSeqRejection('dup-hash'));
+    const getSpy = jest
+      .spyOn(rpc.Server.prototype, 'getTransaction')
+      .mockResolvedValue(txStatus(rpc.Api.GetTransactionStatus.SUCCESS, 42));
+
+    const result = await new TransactionPipeline(makeClient()).submit(signedTx(), {
+      maxAttempts: 1,
+      pollIntervalMs: 1,
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data).toMatchObject({ hash: 'dup-hash', ledger: 42, feeBumped: false });
+    expect(sendSpy).toHaveBeenCalledTimes(1);
+    expect(getSpy).toHaveBeenCalledWith('dup-hash');
+  });
+
+  it('does not rebuild the transaction when the duplicate already landed', async () => {
+    const source = Keypair.random();
+    const getAccountSpy = jest
+      .spyOn(rpc.Server.prototype, 'getAccount')
+      .mockResolvedValue(new Account(source.publicKey(), '100'));
+    jest.spyOn(rpc.Server.prototype, 'simulateTransaction').mockResolvedValue(simSuccess('500'));
+    const sendSpy = jest
+      .spyOn(rpc.Server.prototype, 'sendTransaction')
+      .mockResolvedValue(badSeqRejection('dup-hash'));
+    jest
+      .spyOn(rpc.Server.prototype, 'getTransaction')
+      .mockResolvedValue(txStatus(rpc.Api.GetTransactionStatus.SUCCESS, 42));
+
+    const result = await new TransactionPipeline(makeClient()).run({
+      sourceAccount: source.publicKey(),
+      operations: [new Contract(CONTRACT_ID).call('increment')],
+      signers: [source],
+      prepare: { maxAttempts: 1 },
+      submit: { maxAttempts: 1, pollIntervalMs: 1 },
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.hash).toBe('dup-hash');
+    // A bad-sequence rebuild would re-fetch the account and send a second
+    // transaction that runs the operation again.
+    expect(getAccountSpy).toHaveBeenCalledTimes(1);
+    expect(sendSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the rejection when the rejected envelope never landed', async () => {
+    jest
+      .spyOn(rpc.Server.prototype, 'sendTransaction')
+      .mockResolvedValue(badSeqRejection('stale-hash'));
+    const getSpy = jest
+      .spyOn(rpc.Server.prototype, 'getTransaction')
+      .mockResolvedValue(txStatus(rpc.Api.GetTransactionStatus.NOT_FOUND));
+
+    const result = await new TransactionPipeline(makeClient()).submit(signedTx(), {
+      maxAttempts: 1,
+      pollIntervalMs: 1,
+    });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.code).toBe('SUBMISSION_ERROR');
+    expect(getSpy).toHaveBeenCalledTimes(3);
+  });
+
+  it('does not look up the transaction for other node rejections', async () => {
+    jest.spyOn(rpc.Server.prototype, 'sendTransaction').mockResolvedValue({
+      status: 'ERROR',
+      hash: 'other-hash',
+      latestLedger: 1,
+      latestLedgerCloseTime: 1,
+    } as unknown as rpc.Api.SendTransactionResponse);
+    const getSpy = jest.spyOn(rpc.Server.prototype, 'getTransaction');
+
+    const result = await new TransactionPipeline(makeClient()).submit(signedTx(), {
+      maxAttempts: 1,
+      pollIntervalMs: 1,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(getSpy).not.toHaveBeenCalled();
+  });
+});
+
+// ── abort (#766) ─────────────────────────────────────────────────────────────
+
+describe('TransactionPipeline abort (#766)', () => {
+  afterEach(() => jest.restoreAllMocks());
+
+  function signedTx(): Transaction {
+    const keypair = Keypair.random();
+    const tx = buildUnsignedTx(keypair.publicKey());
+    tx.sign(keypair);
+    return tx;
+  }
+
+  function pendingSend(hash: string): rpc.Api.SendTransactionResponse {
+    return {
+      status: 'PENDING',
+      hash,
+      latestLedger: 1,
+      latestLedgerCloseTime: 1,
+    } as rpc.Api.SendTransactionResponse;
+  }
+
+  function notFound(): rpc.Api.GetTransactionResponse {
+    return {
+      status: rpc.Api.GetTransactionStatus.NOT_FOUND,
+    } as unknown as rpc.Api.GetTransactionResponse;
+  }
+
+  it('stops polling promptly when the caller aborts during the wait between polls', async () => {
+    const controller = new AbortController();
+    jest.spyOn(rpc.Server.prototype, 'sendTransaction').mockResolvedValue(pendingSend('abort-me'));
+    const getSpy = jest
+      .spyOn(rpc.Server.prototype, 'getTransaction')
+      .mockResolvedValue(notFound());
+    // Each wait is a minute long, so the abort has to interrupt it.
+    setTimeout(() => controller.abort(), 20);
+
+    const startedAt = Date.now();
+    const result = await new TransactionPipeline(makeClient()).submit(signedTx(), {
+      maxAttempts: 1,
+      pollIntervalMs: 60_000,
+      signal: controller.signal,
+    });
+
+    expect(Date.now() - startedAt).toBeLessThan(5_000);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.code).toBe('SUBMISSION_ERROR');
+    // The hash is named so the caller can check it later.
+    expect(result.error.message).toContain('abort-me');
+    expect(getSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not broadcast when the signal is already aborted', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const sendSpy = jest.spyOn(rpc.Server.prototype, 'sendTransaction');
+
+    const result = await new TransactionPipeline(makeClient()).submit(signedTx(), {
+      maxAttempts: 1,
+      signal: controller.signal,
+    });
+
+    expect(sendSpy).not.toHaveBeenCalled();
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.message).toContain('aborted before broadcast');
+  });
+
+  it('sends no further fee-bump envelope after an abort', async () => {
+    const controller = new AbortController();
+    const sendSpy = jest
+      .spyOn(rpc.Server.prototype, 'sendTransaction')
+      .mockResolvedValue(pendingSend('original'));
+    jest.spyOn(rpc.Server.prototype, 'getTransaction').mockImplementation(async () => {
+      controller.abort();
+      return notFound();
+    });
+    const feeStatsSpy = jest.spyOn(rpc.Server.prototype, 'getFeeStats');
+
+    const result = await new TransactionPipeline(makeClient()).submit(signedTx(), {
+      maxAttempts: 1,
+      pollAttempts: 1,
+      pollIntervalMs: 1,
+      signal: controller.signal,
+      feeBump: { feeSource: Keypair.random(), maxFeeBump: 2 },
+    });
+
+    expect(result.ok).toBe(false);
+    expect(sendSpy).toHaveBeenCalledTimes(1);
+    expect(feeStatsSpy).not.toHaveBeenCalled();
+  });
+});
+
+// ── fee-rejection bump fee (#767) ────────────────────────────────────────────
+
+describe('TransactionPipeline fee-rejection bump fee (#767)', () => {
+  afterEach(() => jest.restoreAllMocks());
+
+  /** Submits once with TRY_AGAIN_LATER, then accepts the fee-bump envelope. */
+  function mockFeeRejection(source: Keypair) {
+    jest
+      .spyOn(rpc.Server.prototype, 'getAccount')
+      .mockResolvedValue(new Account(source.publicKey(), '100'));
+    jest.spyOn(rpc.Server.prototype, 'simulateTransaction').mockResolvedValue(simSuccess('500'));
+    jest
+      .spyOn(rpc.Server.prototype, 'getTransaction')
+      .mockResolvedValue({
+        status: rpc.Api.GetTransactionStatus.SUCCESS,
+        ledger: 9,
+      } as unknown as rpc.Api.GetTransactionResponse);
+    return jest
+      .spyOn(rpc.Server.prototype, 'sendTransaction')
+      .mockResolvedValueOnce({
+        status: 'TRY_AGAIN_LATER',
+        hash: 'rejected',
+        latestLedger: 1,
+        latestLedgerCloseTime: 1,
+      } as rpc.Api.SendTransactionResponse)
+      .mockResolvedValueOnce({
+        status: 'PENDING',
+        hash: 'bumped',
+        latestLedger: 2,
+        latestLedgerCloseTime: 2,
+      } as rpc.Api.SendTransactionResponse);
+  }
+
+  function runWithFeeBump(
+    source: Keypair,
+    feeBump: { feeSource: Keypair; baseFee?: string },
+    onFeeBump: (event: { reason: string; baseFee: string; attempt: number }) => void,
+  ) {
+    return new TransactionPipeline(makeClient()).run({
+      sourceAccount: source.publicKey(),
+      operations: [new Contract(CONTRACT_ID).call('increment')],
+      signers: [source],
+      prepare: { maxAttempts: 1 },
+      submit: { maxAttempts: 1, pollIntervalMs: 1, feeBump: { ...feeBump, onFeeBump } },
+    });
+  }
+
+  it('bumps from current fee stats when no baseFee is pinned', async () => {
+    const source = Keypair.random();
+    const sendSpy = mockFeeRejection(source);
+    jest.spyOn(rpc.Server.prototype, 'getFeeStats').mockResolvedValue({
+      latestLedger: 1,
+      inclusionFee: { p90: '100' },
+      sorobanInclusionFee: { p90: '10000000' },
+    } as unknown as rpc.Api.GetFeeStatsResponse);
+    const notifications: Array<{ reason: string; baseFee: string; attempt: number }> = [];
+
+    const result = await runWithFeeBump(source, { feeSource: Keypair.random() }, (event) =>
+      notifications.push(event),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(sendSpy).toHaveBeenCalledTimes(2);
+    // Twice the network's current p90, well above the fee the node rejected.
+    expect(notifications).toEqual([
+      expect.objectContaining({ reason: 'fee-rejection', attempt: 1, baseFee: '20000000' }),
+    ]);
+  });
+
+  it('keeps a pinned baseFee exactly as given and does not read fee stats', async () => {
+    const source = Keypair.random();
+    mockFeeRejection(source);
+    const feeStatsSpy = jest.spyOn(rpc.Server.prototype, 'getFeeStats').mockResolvedValue({
+      latestLedger: 1,
+      inclusionFee: { p90: '100' },
+      sorobanInclusionFee: { p90: '100' },
+    } as unknown as rpc.Api.GetFeeStatsResponse);
+    const notifications: Array<{ reason: string; baseFee: string; attempt: number }> = [];
+
+    const result = await runWithFeeBump(
+      source,
+      { feeSource: Keypair.random(), baseFee: '5000' },
+      (event) => notifications.push(event),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(feeStatsSpy).not.toHaveBeenCalled();
+    expect(notifications).toEqual([
+      expect.objectContaining({ reason: 'fee-rejection', baseFee: '5000' }),
+    ]);
+  });
+
+  it('falls back to the rejected fee when fee stats are unavailable', async () => {
+    const source = Keypair.random();
+    const sendSpy = mockFeeRejection(source);
+    jest
+      .spyOn(rpc.Server.prototype, 'getFeeStats')
+      .mockRejectedValue(new Error('rpc down'));
+    const notifications: Array<{ reason: string; baseFee: string; attempt: number }> = [];
+
+    const result = await runWithFeeBump(source, { feeSource: Keypair.random() }, (event) =>
+      notifications.push(event),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(sendSpy).toHaveBeenCalledTimes(2);
+    const rejected = sendSpy.mock.calls[0][0] as Transaction;
+    expect(notifications[0].baseFee).toBe(rejected.fee);
+  });
+});
+
+// ── stage progress (#768) ────────────────────────────────────────────────────
+
+describe('TransactionPipeline onProgress (#768)', () => {
+  afterEach(() => jest.restoreAllMocks());
+
+  function signedTx(): Transaction {
+    const keypair = Keypair.random();
+    const tx = buildUnsignedTx(keypair.publicKey());
+    tx.sign(keypair);
+    return tx;
+  }
+
+  function send(
+    status: 'PENDING' | 'TRY_AGAIN_LATER',
+    hash = 'progress-hash',
+  ): rpc.Api.SendTransactionResponse {
+    return {
+      status,
+      hash,
+      latestLedger: 1,
+      latestLedgerCloseTime: 1,
+    } as rpc.Api.SendTransactionResponse;
+  }
+
+  function txStatus(status: rpc.Api.GetTransactionStatus, ledger?: number) {
+    return { status, ledger } as unknown as rpc.Api.GetTransactionResponse;
+  }
+
+  function feeStats() {
+    return {
+      latestLedger: 100,
+      inclusionFee: { p90: '500' },
+      sorobanInclusionFee: { p90: '600' },
+    } as unknown as rpc.Api.GetFeeStatsResponse;
+  }
+
+  it('reports broadcasting then confirming, once each, in order', async () => {
+    jest.spyOn(rpc.Server.prototype, 'sendTransaction').mockResolvedValue(send('PENDING'));
+    jest
+      .spyOn(rpc.Server.prototype, 'getTransaction')
+      .mockResolvedValueOnce(txStatus(rpc.Api.GetTransactionStatus.NOT_FOUND))
+      .mockResolvedValueOnce(txStatus(rpc.Api.GetTransactionStatus.SUCCESS, 7));
+    const stages: string[] = [];
+
+    const result = await new TransactionPipeline(makeClient()).submit(signedTx(), {
+      maxAttempts: 1,
+      pollIntervalMs: 1,
+      onProgress: (stage) => stages.push(stage),
+    });
+
+    expect(result.ok).toBe(true);
+    expect(stages).toEqual(['broadcasting', 'confirming']);
+  });
+
+  it('reports a TRY_AGAIN_LATER replay as the same broadcasting stage', async () => {
+    jest
+      .spyOn(rpc.Server.prototype, 'sendTransaction')
+      .mockResolvedValueOnce(send('TRY_AGAIN_LATER'))
+      .mockResolvedValueOnce(send('PENDING'));
+    jest
+      .spyOn(rpc.Server.prototype, 'getTransaction')
+      .mockResolvedValue(txStatus(rpc.Api.GetTransactionStatus.SUCCESS, 7));
+    const stages: string[] = [];
+
+    const result = await new TransactionPipeline(makeClient()).submit(signedTx(), {
+      maxAttempts: 2,
+      baseDelayMs: 1,
+      maxDelayMs: 1,
+      pollIntervalMs: 1,
+      onProgress: (stage) => stages.push(stage),
+    });
+
+    expect(result.ok).toBe(true);
+    expect(stages).toEqual(['broadcasting', 'confirming']);
+  });
+
+  it('reports each escalated broadcast as a new transition', async () => {
+    const sendSpy = jest
+      .spyOn(rpc.Server.prototype, 'sendTransaction')
+      .mockResolvedValueOnce(send('PENDING', 'original'))
+      .mockResolvedValueOnce(send('PENDING', 'bumped'));
+    jest
+      .spyOn(rpc.Server.prototype, 'getTransaction')
+      .mockResolvedValueOnce(txStatus(rpc.Api.GetTransactionStatus.NOT_FOUND))
+      .mockResolvedValueOnce(txStatus(rpc.Api.GetTransactionStatus.SUCCESS, 8));
+    jest.spyOn(rpc.Server.prototype, 'getFeeStats').mockResolvedValue(feeStats());
+    const stages: string[] = [];
+
+    const result = await new TransactionPipeline(makeClient()).submit(signedTx(), {
+      maxAttempts: 1,
+      pollAttempts: 1,
+      pollIntervalMs: 1,
+      onProgress: (stage) => stages.push(stage),
+      feeBump: { feeSource: Keypair.random(), maxFeeBump: 1 },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(sendSpy).toHaveBeenCalledTimes(2);
+    expect(stages).toEqual(['broadcasting', 'confirming', 'broadcasting', 'confirming']);
+  });
+
+  it('ignores a progress callback that throws', async () => {
+    jest.spyOn(rpc.Server.prototype, 'sendTransaction').mockResolvedValue(send('PENDING'));
+    jest
+      .spyOn(rpc.Server.prototype, 'getTransaction')
+      .mockResolvedValue(txStatus(rpc.Api.GetTransactionStatus.SUCCESS, 7));
+
+    const result = await new TransactionPipeline(makeClient()).submit(signedTx(), {
+      maxAttempts: 1,
+      pollIntervalMs: 1,
+      onProgress: () => {
+        throw new Error('ui crashed');
+      },
+    });
+
+    expect(result.ok).toBe(true);
   });
 });
